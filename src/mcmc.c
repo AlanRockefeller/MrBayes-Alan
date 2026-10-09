@@ -7752,6 +7752,22 @@ MrBFlt LogOmegaPrior (MrBFlt w1, MrBFlt w2, MrBFlt w3)
 /* external (tip): 1, internal: 0 */
 #define IsTip(Node) (Node->index < numTaxa || (Node->anc)->index < numTaxa)
 
+/* log(p->length), remembered per node: LogDirPrior sums it over every branch
+   twice per branch-length or topology move, and most branches have not
+   changed. The value is the same log() of the same length, so the sum is
+   unchanged; a length equal to the cached one is the same number. */
+static MrBFlt LogLength (TreeNode *p)
+{
+    if (p->logLengthValid == NO || p->lengthOfLog != p->length)
+        {
+        p->logLength = log (p->length);
+        p->lengthOfLog = p->length;
+        p->logLengthValid = YES;
+        }
+    return p->logLength;
+}
+
+
 MrBFlt LogDirPrior (Tree *t, ModelParams *mp, int PV)
 {
     /* ln prior prob. under Dirichlet priors and twoExp prior
@@ -7783,7 +7799,7 @@ MrBFlt LogDirPrior (Tree *t, ModelParams *mp, int PV)
             p = t->allDownPass[i];
             treeL += p->length;
             nb[IsTip(p)]++;
-            tb[IsTip(p)] += log(p->length);
+            tb[IsTip(p)] += LogLength(p);
             }
         lnprior += (a-1)*tb[1] + (a*c -1)*tb[0];
         if (PV == 2)

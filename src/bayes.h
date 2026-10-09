@@ -587,6 +587,9 @@ typedef struct node
     MrBFlt          nodeDepth;              /*!< node depth (height)                        */
     MrBFlt          age;                    /*!< age of node                                */
     Calibration     *calibration;           /*!< pointer to calibration data                */
+    MrBFlt          logLength;              /*!< log(lengthOfLog), cached by LogDirPrior    */
+    MrBFlt          lengthOfLog;            /*!< length that logLength was computed from    */
+    int             logLengthValid;         /*!< is logLength set? (nodes start zeroed)     */
     }
     TreeNode;
 
