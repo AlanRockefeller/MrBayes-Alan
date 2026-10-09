@@ -52,6 +52,7 @@
 #include "proposal.h"
 #include "sumpt.h"
 #include "utils.h"
+#include "dikarya.h"
 #if defined(__MWERKS__)
 #include "SIOUX.h"
 #endif
@@ -4835,6 +4836,10 @@ MrBFlt GetFitchPartials (ModelInfo *m, int chain, int source1, int source2, int 
 
     if (m->nParsIntsPerSite == 1)
         {
+#   if defined (DK_X86)
+        if (DkEnabled() == YES)
+            return DkFitchDown (pS1, pS2, pD, nSitesOfPat, m->numChars);
+#   endif
         for (c=0; c<m->numChars; c++)
             {
             x[0] = pS1[c] & pS2[c];
@@ -4924,6 +4929,11 @@ void GetParsFP (Tree *t, TreeNode *p, int chain)
             
             if (m->nParsIntsPerSite == 1)
                 {
+#   if defined (DK_X86)
+                if (DkEnabled() == YES)
+                    DkFitchFinal (pL, pR, pP, pA, m->numChars);
+                else
+#   endif
                 for (c=0; c<m->numChars; c++)
                     {
                     x[0] = pP[c] & pA[c];
