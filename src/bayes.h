@@ -3,7 +3,7 @@
 
 #ifdef HAVE_CONFIG_H
 #   include "config.h"
-#   define VERSION_NUMBER  PACKAGE_VERSION
+#   define VERSION_NUMBER  PACKAGE_VERSION "-dikarya2"
 #else  /* some defaults that would otherwise be guessed by configure */
 #   define PACKAGE_NAME "MrBayes"
 #   define PACKAGE_VERSION "3.2.8"
