@@ -53,6 +53,12 @@
 #include "sumpt.h"
 #include "utils.h"
 #include "dikarya.h"
+#include "dikarya_par.h"
+#if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#include <pthread.h>
+#include <sched.h>
+#include <time.h>
+#endif
 #if defined(__MWERKS__)
 #include "SIOUX.h"
 #endif
@@ -5732,6 +5738,174 @@ int InitAugmentedModels (void)
 |       space for adgamma probs, if used.
 |
 -------------------------------------------------------------------------*/
+/* ---- Dikarya: concurrent chains (see dikarya_par.h) ---- */
+int                 dkChainPar = NO;
+__thread ModelInfo  *dkModelOverride = NULL;
+int                 *dkDeferred = NULL, *dkDeferFreq = NULL;
+
+#if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+/* The scratch areas a chain flips its buffers with. MrBayes has one set,
+   shared by all chains in turn; concurrent chains need one each. Not the site
+   scaler and its scaler-node flags: MrBayes reads entries of the flag array it
+   inherits from whichever chain flipped last, so those stay shared and are
+   only flipped on the main thread, in chain order (see DkBeagleRescaleAll). */
+typedef struct
+    {
+    int     *condLikeScratchIndex, *tiProbsScratchIndex, *nodeScalerScratchIndex,
+            *unscaledNodesScratch;
+    int     cijkScratchIndex;
+    } DkScratchSet;
+
+/* The work arrays the likelihood functions fill in ModelInfo on every call */
+typedef struct
+    {
+    BeagleOperation *operations;
+    int     *scaleFactorsOps, *tiProbIndices, *bufferIndices, *eigenIndices,
+            *childBufferIndices, *childTiProbIndices, *cumulativeScaleIndices;
+    MrBFlt  *inRates, *branchLengths, *inWeights, *logLikelihoods;
+    } DkWorkArrays;
+
+static int          dkExtra = 0;        /* scratch sets beyond MrBayes's own: numLocalChains - 1 */
+static DkScratchSet *dkScr = NULL;      /* [chain], division 1 */
+static int          dkInstalled = 0;    /* chain whose scratch set modelSettings[0] holds */
+static ModelInfo    *dkModel = NULL;    /* [chain]: private copy used by the likelihood thread */
+static DkWorkArrays *dkWork = NULL;     /* [chain] */
+
+
+static void DkSaveScratch (ModelInfo *m, DkScratchSet *s)
+{
+    s->condLikeScratchIndex   = m->condLikeScratchIndex;
+    s->tiProbsScratchIndex    = m->tiProbsScratchIndex;
+    s->nodeScalerScratchIndex = m->nodeScalerScratchIndex;
+    s->unscaledNodesScratch   = m->unscaledNodesScratch;
+    s->cijkScratchIndex       = m->cijkScratchIndex;
+}
+
+
+static void DkLoadScratch (ModelInfo *m, DkScratchSet *s)
+{
+    m->condLikeScratchIndex   = s->condLikeScratchIndex;
+    m->tiProbsScratchIndex    = s->tiProbsScratchIndex;
+    m->nodeScalerScratchIndex = s->nodeScalerScratchIndex;
+    m->unscaledNodesScratch   = s->unscaledNodesScratch;
+    m->cijkScratchIndex       = s->cijkScratchIndex;
+}
+
+
+static int dkSolo = NO;     /* the likelihoods computed on the main thread alone (see DkAdapt) */
+
+/* make chain's scratch set the one in modelSettings[0]; on its own the main
+   thread passes one set from chain to chain, as MrBayes does (the sets are
+   disjoint either way, so this can change between generations) */
+static void DkUseScratch (int chain)
+{
+    if (dkSolo == YES)
+        chain = 0;
+    if (dkChainPar == NO || chain == dkInstalled)
+        return;
+    DkSaveScratch (&modelSettings[0], &dkScr[dkInstalled]);
+    DkLoadScratch (&modelSettings[0], &dkScr[chain]);
+    dkInstalled = chain;
+}
+
+
+/* the moves RunChain's concurrent path has been checked against: their
+   effects on shared state are division flags that it carries per chain */
+static int DkMoveAllowed (MoveFxn *f)
+{
+    return (f == &Move_BrLen || f == &Move_ExtSPR || f == &Move_ExtTBR || f == &Move_NNI ||
+            f == &Move_NodeSlider || f == &Move_ParsSPR1 || f == &Move_ParsTBR1 || f == &Move_Pinvar ||
+            f == &Move_RateShape_M || f == &Move_Revmat_Dir || f == &Move_Revmat_Slider ||
+            f == &Move_Statefreqs || f == &Move_Statefreqs_Slider || f == &Move_Tratio_Dir ||
+            f == &Move_TreeLen) ? YES : NO;
+}
+
+
+static int DkChainParQualifies (void)
+{
+    int         i;
+    const char  *v, *p;
+    ModelInfo   *m = &modelSettings[0];
+
+#   if defined (DEBUG_LNLIKELIHOOD) || defined (DEBUG_CONSTRAINTS) || defined (DEBUG_RUN_WITHOUT_DATA) || \
+       defined (SHOW_MOVE) || defined (TIMING_ANALIZ) || defined (BEST_MPI_ENABLED)
+    return NO;  /* debugging code in RunChain's loop that DkMove and DkAccept do not reproduce */
+#   endif
+    if (beagleThreadCount < 2 || beagleThreadCount == 99)
+        return NO;
+    if (numLocalChains < 2 || numLocalChains != chainParams.numRuns * chainParams.numChains ||
+        numCurrentDivisions != 1 || numTrees != 1)
+        return NO;
+    if (m->useBeagle != YES || m->useBeagleMultiPartitions == YES || beagleScalingScheme != MB_BEAGLE_SCALE_DYNAMIC)
+        return NO;
+    if ((m->dataType != DNA && m->dataType != RNA) || m->numModelStates != 4 || m->nCijkParts > 1)
+        return NO;
+    if (m->gibbsGamma == YES || chainHasAdgamma == YES || m->parsModelId == YES)
+        return NO;
+    if (m->printAncStates == YES || m->printSiteRates == YES || m->printPosSel == YES || m->printSiteOmegas == YES)
+        return NO;
+    if (chainParams.isSS == YES || chainParams.runWithData == NO || chainParams.append == YES ||
+        chainParams.weightScheme[0] + chainParams.weightScheme[1] > ETA)
+        return NO;
+    for (i=0; i<numUsedMoves; i++)
+        if (DkMoveAllowed (usedMoves[i]->moveFxn) == NO)
+            return NO;
+    /* only a BEAGLE that keeps per-thread scratch: 4.0.1-dikarya2 and later */
+    v = beagleGetVersion ();
+    p = (v != NULL ? strstr (v, "-dikarya") : NULL);
+    if (p == NULL || atoi (p + 8) < 2)
+        return NO;
+    return YES;
+}
+
+
+/* private ModelInfo copies and work arrays, once division 1 is set up */
+static int DkAllocChainWork (ModelInfo *m)
+{
+    int     c, n = m->nCijkParts;
+    DkWorkArrays *w;
+
+    dkModel = (ModelInfo *) SafeCalloc (numLocalChains, sizeof (ModelInfo));
+    dkWork = (DkWorkArrays *) SafeCalloc (numLocalChains, sizeof (DkWorkArrays));
+    if (!dkModel || !dkWork)
+        return (ERROR);
+    for (c=0; c<numLocalChains; c++)
+        {
+        w = &dkWork[c];
+        w->logLikelihoods         = (MrBFlt *) SafeCalloc (m->numChars, sizeof(MrBFlt));
+        w->inRates                = (MrBFlt *) SafeCalloc (m->numRateCats, sizeof(MrBFlt));
+        w->branchLengths          = (MrBFlt *) SafeCalloc (2*numLocalTaxa, sizeof(MrBFlt));
+        w->tiProbIndices          = (int *) SafeCalloc (2*numLocalTaxa, sizeof(int));
+        w->inWeights              = (MrBFlt *) SafeCalloc (m->numRateCats*n, sizeof(MrBFlt));
+        w->bufferIndices          = (int *) SafeCalloc (n, sizeof(int));
+        w->eigenIndices           = (int *) SafeCalloc (n, sizeof(int));
+        w->childBufferIndices     = (int *) SafeCalloc (n, sizeof(int));
+        w->childTiProbIndices     = (int *) SafeCalloc (n, sizeof(int));
+        w->cumulativeScaleIndices = (int *) SafeCalloc (n, sizeof(int));
+        w->operations             = (BeagleOperation *) SafeCalloc (m->numCondLikes*n, sizeof(BeagleOperation));
+        w->scaleFactorsOps        = (int *) SafeCalloc (2*numLocalTaxa*n, sizeof(int));
+        if (!w->logLikelihoods || !w->inRates || !w->branchLengths || !w->tiProbIndices || !w->inWeights ||
+            !w->bufferIndices || !w->eigenIndices || !w->childBufferIndices || !w->childTiProbIndices ||
+            !w->cumulativeScaleIndices || !w->operations || !w->scaleFactorsOps)
+            return (ERROR);
+        }
+    DkSaveScratch (m, &dkScr[0]);
+    dkInstalled = 0;
+    return (NO_ERROR);
+}
+#endif
+
+
+int DkChainParExtraScratch (void)
+{
+#if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+    return dkExtra;
+#else
+    return 0;
+#endif
+}
+
+
 int InitChainCondLikes (void)
 {
     int         c, d, i, j, k, s, t, numReps, condLikesUsed, nIntNodes, nNodes,
@@ -5810,8 +5984,17 @@ int InitChainCondLikes (void)
         nIntNodes = GetTree(m->brlens, 0, 0)->nIntNodes;
         nNodes = GetTree(m->brlens, 0, 0)->nNodes;
 
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+        /* Dikarya: concurrent chains need a scratch set per chain */
+        if (d == 0)
+            {
+            dkChainPar = DkChainParQualifies ();
+            dkExtra = (dkChainPar == YES ? numLocalChains - 1 : 0);
+            }
+#   endif
+
         /* figure out number of cond like arrays */
-        m->numCondLikes = (numLocalChains + 1) * (nIntNodes);
+        m->numCondLikes = (numLocalChains + 1 + DkChainParExtraScratch()) * (nIntNodes);
         m->numCondLikes += numLocalTaxa;
         /*
 #   if !defined (DEBUG_NOSHORTCUTS)
@@ -5824,7 +6007,7 @@ int InitChainCondLikes (void)
         */
 
         /* figure out number of node and site scalers */
-        m->numScalers = (numLocalChains + 1) * (nIntNodes + 1);   /* add 1 for site scalers */
+        m->numScalers = (numLocalChains + 1 + DkChainParExtraScratch()) * (nIntNodes + 1);   /* add 1 for site scalers */
 
         /* figure out length of ti prob array and number of ti prob arrays */
         m->tiProbLength = 0;
@@ -5863,7 +6046,7 @@ int InitChainCondLikes (void)
             m->numTiCats    = m->numRateCats * m->numBetaCats * m->numOmegaCats;   /* A single partition has either gamma, beta or omega categories */
             m->tiProbLength = m->numModelStates * m->numModelStates * m->numTiCats;
             }
-        m->numTiProbs = (numLocalChains + 1) * nNodes;
+        m->numTiProbs = (numLocalChains + 1 + DkChainParExtraScratch()) * nNodes;
         
         /* set info about eigen systems */
         if (InitEigenSystemInfo (m) == ERROR)
@@ -5984,6 +6167,27 @@ int InitChainCondLikes (void)
             m->condLikeScratchIndex[i+numLocalTaxa] = clIndex;
             clIndex += indexStep;
             }
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+        if (dkChainPar == YES && d == 0)
+            {
+            dkScr = (DkScratchSet *) SafeCalloc (numLocalChains, sizeof (DkScratchSet));
+            if (!dkScr)
+                return (ERROR);
+            for (j=1; j<numLocalChains; j++)
+                {
+                dkScr[j].condLikeScratchIndex = (int *) SafeMalloc (nNodes * sizeof(int));
+                if (!dkScr[j].condLikeScratchIndex)
+                    return (ERROR);
+                for (i=0; i<nNodes; i++)
+                    dkScr[j].condLikeScratchIndex[i] = -1;
+                for (i=0; i<nIntNodes; i++)
+                    {
+                    dkScr[j].condLikeScratchIndex[i+numLocalTaxa] = clIndex;
+                    clIndex += indexStep;
+                    }
+                }
+            }
+#   endif
 
         /* parsimony models need nothing of the below */
         if (m->parsModelId == YES)
@@ -6147,10 +6351,10 @@ int InitChainCondLikes (void)
         /* allocate eigen system space (needed also for Beagle version */
         if (m->nCijkParts > 0)
             {
-            m->cijks = (MrBFlt**) SafeMalloc((numLocalChains + 1) * sizeof(MrBFlt*));
+            m->cijks = (MrBFlt**) SafeMalloc((numLocalChains + 1 + DkChainParExtraScratch()) * sizeof(MrBFlt*));
             if (!m->cijks)
                 return ERROR;
-            for (i=0; i<numLocalChains+1; i++)
+            for (i=0; i<numLocalChains+1+DkChainParExtraScratch(); i++)
                 {
                 m->cijks[i] = (MrBFlt*) SafeMalloc(m->cijkLength * sizeof(MrBFlt));
                 if (!m->cijks[i])
@@ -6189,6 +6393,22 @@ int InitChainCondLikes (void)
             m->tiProbsScratchIndex[i] = tiIndex;
             tiIndex += indexStep;
             }
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+        if (dkChainPar == YES && d == 0)
+            {
+            for (j=1; j<numLocalChains; j++)
+                {
+                dkScr[j].tiProbsScratchIndex = (int *) SafeMalloc (nNodes * sizeof(int));
+                if (!dkScr[j].tiProbsScratchIndex)
+                    return (ERROR);
+                for (i=0; i<nNodes; i++)
+                    {
+                    dkScr[j].tiProbsScratchIndex[i] = tiIndex;
+                    tiIndex += indexStep;
+                    }
+                }
+            }
+#   endif
 
         /* allocate and set up rescale frequency */
         m->rescaleFreq = (int*) SafeMalloc((numLocalChains) * sizeof(int));
@@ -6213,6 +6433,17 @@ int InitChainCondLikes (void)
         m->unscaledNodesScratch = (int *) SafeCalloc (nNodes, sizeof (int));
         if (!m->unscaledNodesScratch)
             return (ERROR);
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+        if (dkChainPar == YES && d == 0)
+            {
+            for (j=1; j<numLocalChains; j++)
+                {
+                dkScr[j].unscaledNodesScratch = (int *) SafeCalloc (nNodes, sizeof (int));
+                if (!dkScr[j].unscaledNodesScratch)
+                    return (ERROR);
+                }
+            }
+#   endif
             
         /* allocate and set up node scaler indices */
         scalerIndex = 0;
@@ -6253,6 +6484,25 @@ int InitChainCondLikes (void)
             scalerIndex += indexStep;
             }
         m->siteScalerScratchIndex = scalerIndex;
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+        if (dkChainPar == YES && d == 0)
+            {
+            scalerIndex += indexStep;   /* past MrBayes's own site scaler scratch */
+            for (j=1; j<numLocalChains; j++)
+                {
+                dkScr[j].nodeScalerScratchIndex = (int *) SafeMalloc (nNodes * sizeof (int));
+                if (!dkScr[j].nodeScalerScratchIndex)
+                    return (ERROR);
+                for (i=0; i<nNodes; i++)
+                    dkScr[j].nodeScalerScratchIndex[i] = -1;
+                for (i=0; i<nIntNodes; i++)
+                    {
+                    dkScr[j].nodeScalerScratchIndex[i+numLocalTaxa] = scalerIndex;
+                    scalerIndex += indexStep;
+                    }
+                }
+            }
+#   endif
             
 #   if defined (BEAGLE_ENABLED)
         /* used only with Beagle advanced dynamic rescaling where we set scaler nodes for each partition  */
@@ -6287,6 +6537,13 @@ int InitChainCondLikes (void)
             for (i=0; i<numLocalChains; i++)
                 m->cijkIndex[i] = i*indexStep;
             m->cijkScratchIndex = numLocalChains*indexStep;
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+            if (dkChainPar == YES && d == 0)
+                {
+                for (j=1; j<numLocalChains; j++)
+                    dkScr[j].cijkScratchIndex = (numLocalChains + j)*indexStep;
+                }
+#   endif
             }
 
 #   if defined (BEAGLE_ENABLED)
@@ -6330,10 +6587,24 @@ int InitChainCondLikes (void)
                     beagleSetCategoryWeights(m->beagleInstance,
                                              m->cijkScratchIndex + divisionOffset,
                                              m->inWeights);
+#   if !defined (MPI_ENABLED)
+                    if (dkChainPar == YES && d == 0)
+                        {
+                        for (j=1; j<numLocalChains; j++)
+                            beagleSetCategoryWeights(m->beagleInstance,
+                                                     dkScr[j].cijkScratchIndex,
+                                                     m->inWeights);
+                        }
+#   endif
                     }
                 }
             
             }
+#   endif
+
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+        if (dkChainPar == YES && d == 0 && DkAllocChainWork (m) == ERROR)
+            return (ERROR);
 #   endif
 
         /* fill in tip conditional likelihoods */
@@ -16396,6 +16667,709 @@ int ReusePreviousResults (int *numSamples, int steps)
 }
 
 
+#if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+/* ---- Dikarya: generations with the chains' likelihoods computed concurrently ----
+
+   The loop in RunChain does, for each chain in turn: copy the state, pick and
+   make a move, compute the likelihood, draw the acceptance number, accept or
+   reject; then it attempts the swaps. Here the main thread makes the moves and
+   draws the acceptance numbers in that same order (DkMove; in a BEAGLE run
+   nothing between a chain's move and its draw uses random numbers or can abort
+   the move), and hands each chain's likelihood to the pool as soon as the move
+   is made; it accepts or rejects the chains in order as their likelihoods
+   arrive (DkAccept). Across generations it works run by run (DkGenerations),
+   the swaps' random numbers reserved in their place, so that one run's
+   acceptances, swaps and next moves overlap the other run's likelihoods.
+
+   A chain's likelihood reads only that chain's trees and parameters and writes
+   only its own buffers (each chain has its own scratch set), through a private
+   copy of the division's ModelInfo, so it is the same arithmetic on the same
+   operands whichever thread does it and whenever. The division flags the
+   chains share are restored chain by chain at the accept/reject step, to what
+   the original loop leaves there after that chain's likelihood, and the part
+   of the likelihood that uses scratch MrBayes shares between chains
+   (numerical rescaling) is done there too, in chain order. */
+
+enum { DK_NONE = 0, DK_PENDING, DK_CLAIMED, DK_DONE };
+
+int     UpDateCijk (int whichPart, int whichChain);
+
+static int              dkPoolReady = NO;
+static int              *dkJob = NULL;              /* [chain]: DK_* */
+static int              dkSleepers = 0;
+static long             dkSpinNs = 300000;          /* how long a helper waits busily for work */
+static pthread_mutex_t  dkLock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t   dkWake = PTHREAD_COND_INITIALIZER;
+static MCMCMove         **dkMove = NULL;            /* [chain]: this generation's move */
+static MrBFlt           *dkPriorRatio = NULL, *dkPropRatio = NULL, *dkU = NULL;
+static int              *dkAbort = NULL, *dkLaunched = NULL;
+static MrBFlt           *dkLogPrior = NULL;         /* [chain]: LogPrior of the new state, for the debug check */
+static int              *dkPosted = NULL;           /* [chain]: its likelihood went to the pool */
+static int              *dkSwapA = NULL, *dkSwapB = NULL;   /* [run * numSwaps + j]: reserved swaps */
+static RandLong         *dkSwapSeed = NULL;
+
+
+static void DkPause (void)
+{
+#   if defined (__x86_64__) || defined (__i386__)
+    __builtin_ia32_pause ();
+#   endif
+}
+
+
+static long DkNowNs (void)
+{
+    struct timespec t;
+    clock_gettime (CLOCK_MONOTONIC, &t);
+    return (long) t.tv_sec * 1000000000L + t.tv_nsec;
+}
+
+
+/* the likelihood of chain c's new state, as LogLike would compute it */
+static void DkRunJob (int c)
+{
+    ModelInfo   *m = &dkModel[c];
+
+    dkDeferred[c] = NO;
+    dkModelOverride = m;
+    LaunchBEAGLELogLikeForDivision (c, 0, m, GetTree (m->brlens, c, state[c]), &m->lnLike[2*c + state[c]]);
+    dkModelOverride = NULL;
+#   ifndef NDEBUG
+    /* the debug build's check of the prior ratio: a function of this chain's
+       state alone (non-clock trees; see DkMoveAllowed), so it can be done here */
+    dkLogPrior[c] = LogPrior (c);
+#   endif
+    __atomic_store_n (&dkJob[c], DK_DONE, __ATOMIC_RELEASE);
+}
+
+
+/* claim the lowest-numbered pending chain; -1 if none */
+static int DkClaim (void)
+{
+    int     c, expected;
+
+    for (c=0; c<numLocalChains; c++)
+        {
+        if (__atomic_load_n (&dkJob[c], __ATOMIC_ACQUIRE) != DK_PENDING)
+            continue;
+        expected = DK_PENDING;
+        if (__atomic_compare_exchange_n (&dkJob[c], &expected, DK_CLAIMED, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+            return c;
+        }
+    return -1;
+}
+
+
+static int DkAnyPending (void)
+{
+    int     c;
+
+    for (c=0; c<numLocalChains; c++)
+        if (__atomic_load_n (&dkJob[c], __ATOMIC_SEQ_CST) == DK_PENDING)
+            return YES;
+    return NO;
+}
+
+
+static void *DkHelper (void *arg)
+{
+    int     c;
+    long    t0;
+
+    (void) arg;
+    for (;;)
+        {
+        c = DkClaim ();
+        if (c >= 0)
+            {
+            DkRunJob (c);
+            continue;
+            }
+        t0 = DkNowNs ();
+        while (DkAnyPending () == NO && DkNowNs () - t0 < dkSpinNs)
+            DkPause ();
+        if (DkAnyPending () == YES)
+            continue;
+        pthread_mutex_lock (&dkLock);
+        __atomic_add_fetch (&dkSleepers, 1, __ATOMIC_SEQ_CST);
+        while (DkAnyPending () == NO)
+            pthread_cond_wait (&dkWake, &dkLock);
+        __atomic_sub_fetch (&dkSleepers, 1, __ATOMIC_SEQ_CST);
+        pthread_mutex_unlock (&dkLock);
+        }
+    return NULL;
+}
+
+
+static void DkPost (int c)
+{
+    __atomic_store_n (&dkJob[c], DK_PENDING, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n (&dkSleepers, __ATOMIC_SEQ_CST) > 0)
+        {
+        pthread_mutex_lock (&dkLock);
+        pthread_cond_broadcast (&dkWake);
+        pthread_mutex_unlock (&dkLock);
+        }
+}
+
+
+/* wait for chain c's likelihood, computing it (or another) here if nobody has */
+static void DkWait (int c)
+{
+    int     s, o, expected;
+    long    t0 = 0;
+
+    for (;;)
+        {
+        s = __atomic_load_n (&dkJob[c], __ATOMIC_ACQUIRE);
+        if (s == DK_DONE)
+            break;
+        if (s == DK_PENDING)
+            {
+            expected = DK_PENDING;
+            if (__atomic_compare_exchange_n (&dkJob[c], &expected, DK_CLAIMED, 0, __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+                {
+                DkRunJob (c);
+                break;
+                }
+            continue;
+            }
+        o = DkClaim ();
+        if (o >= 0)
+            DkRunJob (o);
+        else if (t0 == 0)
+            t0 = DkNowNs ();
+        else if (DkNowNs () - t0 < dkSpinNs)
+            DkPause ();
+        else
+            sched_yield ();     /* the thread computing it may be waiting for this CPU */
+        }
+    __atomic_store_n (&dkJob[c], DK_NONE, __ATOMIC_RELAXED);
+}
+
+
+/* wait for the likelihoods still being computed, so that none runs on after an error */
+static void DkDrainAll (void)
+{
+    int     c;
+
+    for (c=0; c<numLocalChains; c++)
+        if (__atomic_load_n (&dkJob[c], __ATOMIC_ACQUIRE) != DK_NONE)
+            DkWait (c);
+}
+
+
+static int DkStartPool (void)
+{
+    int         c, n, nCpu;
+    pthread_t   t;
+    const char  *e;
+
+    dkJob = (int *) SafeCalloc (numLocalChains, sizeof(int));
+    dkMove = (MCMCMove **) SafeCalloc (numLocalChains, sizeof(MCMCMove *));
+    dkPriorRatio = (MrBFlt *) SafeCalloc (numLocalChains, sizeof(MrBFlt));
+    dkPropRatio = (MrBFlt *) SafeCalloc (numLocalChains, sizeof(MrBFlt));
+    dkU = (MrBFlt *) SafeCalloc (numLocalChains, sizeof(MrBFlt));
+    dkAbort = (int *) SafeCalloc (numLocalChains, sizeof(int));
+    dkLaunched = (int *) SafeCalloc (numLocalChains, sizeof(int));
+    dkDeferred = (int *) SafeCalloc (numLocalChains, sizeof(int));
+    dkDeferFreq = (int *) SafeCalloc (numLocalChains, sizeof(int));
+    dkLogPrior = (MrBFlt *) SafeCalloc (numLocalChains, sizeof(MrBFlt));
+    dkPosted = (int *) SafeCalloc (numLocalChains, sizeof(int));
+    dkSwapA = (int *) SafeCalloc (chainParams.numRuns * chainParams.numSwaps + 1, sizeof(int));
+    dkSwapB = (int *) SafeCalloc (chainParams.numRuns * chainParams.numSwaps + 1, sizeof(int));
+    dkSwapSeed = (RandLong *) SafeCalloc (chainParams.numRuns * chainParams.numSwaps + 1, sizeof(RandLong));
+    if (!dkPosted || !dkSwapA || !dkSwapB || !dkSwapSeed || !dkLogPrior || !dkJob || !dkMove || !dkPriorRatio || !dkPropRatio || !dkU || !dkAbort || !dkLaunched || !dkDeferred || !dkDeferFreq)
+        return (ERROR);
+    e = getenv ("MRBAYES_DIKARYA_SPIN_US");
+    if (e != NULL && atol (e) >= 0)
+        dkSpinNs = atol (e) * 1000L;
+    /* helpers besides this thread: never more than the chains or the CPUs */
+    n = beagleThreadCount;
+    if (n > numLocalChains)
+        n = numLocalChains;
+    nCpu = (int) sysconf (_SC_NPROCESSORS_ONLN);
+    if (nCpu > 0 && n > nCpu)
+        n = nCpu;
+    for (c=1; c<n; c++)
+        {
+        if (pthread_create (&t, NULL, DkHelper, NULL) != 0)
+            break;
+        pthread_detach (t);
+        }
+    dkPoolReady = YES;
+    return (NO_ERROR);
+}
+
+
+/* chain c's private view of the division, taken right after its move */
+static void DkSnapshot (int c)
+{
+    ModelInfo       *m = &dkModel[c];
+    DkWorkArrays    *w = &dkWork[c];
+
+    *m = modelSettings[0];
+    m->operations             = w->operations;
+    m->scaleFactorsOps        = w->scaleFactorsOps;
+    m->tiProbIndices          = w->tiProbIndices;
+    m->bufferIndices          = w->bufferIndices;
+    m->eigenIndices           = w->eigenIndices;
+    m->childBufferIndices     = w->childBufferIndices;
+    m->childTiProbIndices     = w->childTiProbIndices;
+    m->cumulativeScaleIndices = w->cumulativeScaleIndices;
+    m->inRates                = w->inRates;
+    m->branchLengths          = w->branchLengths;
+    m->inWeights              = w->inWeights;
+    m->logLikelihoods         = w->logLikelihoods;
+    /* the likelihood sets these only on some paths: mark them to tell */
+    m->rescaleFreqOld         = INT_MIN;
+    m->recalculateScalers     = NO;
+}
+
+
+/* the division as the original loop leaves it after chain c's likelihood */
+static void DkRestore (int c)
+{
+    ModelInfo   *g = &modelSettings[0], *m = &dkModel[c];
+
+    DkUseScratch (c);
+    g->upDateCl   = m->upDateCl;
+    g->upDateCijk = m->upDateCijk;
+    g->upDateAll  = m->upDateAll;
+    if (dkLaunched[c] == YES)
+        {
+        /* lnLike is an array inside ModelInfo, so the result is in the copy */
+        g->lnLike[2*c + state[c]] = m->lnLike[2*c + state[c]];
+        g->rescaleBeagleAll = m->rescaleBeagleAll;
+        if (m->rescaleFreqOld != INT_MIN)
+            g->rescaleFreqOld = m->rescaleFreqOld;
+        if (m->recalculateScalers == YES)
+            {
+            g->recalculateScalers = YES;
+            recalcScalers = YES;
+            }
+        if (dkDeferred[c] == YES)
+            {
+            /* the rest of the likelihood, where the original does it */
+            dkDeferred[c] = NO;
+            DkBeagleRescaleAll (c, 0, g, GetTree (g->brlens, c, state[c]), &g->lnLike[2*c + state[c]], dkDeferFreq[c]);
+            g->beagleComputeCount[c]++;
+            }
+        }
+}
+
+
+/* Chain chn's move for its next generation: what RunChain's loop does before
+   the likelihood, then the acceptance draw (in a BEAGLE run nothing between
+   the two uses random numbers or can abort the move); the likelihood goes to
+   the pool. Returns 0, or what DkMoveFailed reports: 1 the tree was
+   inconsistent before the move, 2 the move failed. */
+static int DkMove (int chn, RandLong *seed)
+{
+    int         i;
+    MCMCMove    *theMove;
+    ModelInfo   *m = &modelSettings[0];
+
+    DkUseScratch (chn);
+    CopyTrees (chn);
+    CopyParams (chn);
+    state[chn] ^= 1;
+    theMove = usedMoves[PickProposal(seed, chainId[chn])];
+    dkMove[chn] = theMove;
+    dkPriorRatio[chn] = 0.0;
+    dkPropRatio[chn] = 0.0;
+    abortMove = NO;
+    for (i=0; i<theMove->parm->nRelParts; i++)
+        modelSettings[theMove->parm->relParts[i]].upDateCl = YES;
+#   ifndef NDEBUG
+    if (IsTreeConsistent(theMove->parm, chn, state[chn]) != YES)
+        return 1;
+#   endif
+    if ((theMove->moveFxn)(theMove->parm, chn, seed, &dkPriorRatio[chn], &dkPropRatio[chn], theMove->tuningParam[chainId[chn]]) == ERROR)
+        return 2;
+    if (theMove->parm->paramType == P_TOPOLOGY && DoesTreeSatisfyConstraints(GetTree (theMove->parm, chn, state[chn])) != YES)
+        abortMove = YES;
+    dkAbort[chn] = abortMove;
+    dkLaunched[chn] = NO;
+    if (abortMove == NO)
+        {
+        /* what LogLike and LaunchLogLikeForDivision do before BEAGLE */
+        if (m->upDateCl == YES)
+            {
+            if (m->upDateCijk == YES && UpDateCijk(0, chn) == ERROR)
+                m->lnLike[2*chn + state[chn]] = MRBFLT_NEG_MAX; /* effectively abort the move */
+            else
+                {
+                if (m->upDateCijk == YES)
+                    m->upDateAll = YES;
+                dkLaunched[chn] = YES;
+                }
+            }
+        dkU[chn] = RandomNumber(seed);
+        }
+    DkSnapshot (chn);
+    dkPosted[chn] = (dkLaunched[chn] == YES && dkSolo == NO) ? YES : NO;
+    if (dkPosted[chn] == YES)
+        DkPost (chn);
+    return 0;
+}
+
+
+/* the message RunChain's loop prints when a move cannot be made */
+static int DkMoveFailed (int fail, int chn)
+{
+    if (fail == 1)
+        printf ("IsTreeConsistent failed before a move!\n");
+    else
+        printf ("%s   Error in move %s\n", spacer, dkMove[chn]->name);
+    return ERROR;
+}
+
+
+/* Chain chn's acceptance, once its likelihood is in: the rest of RunChain's loop body */
+static int DkAccept (int chn)
+{
+    int         i, acceptMove;
+    MrBFlt      r = 0.0, lnLikelihoodRatio, lnPriorRatio, lnProposalRatio, lnLike = 0.0, lnPrior = 0.0;
+    MCMCMove    *theMove;
+    ModelInfo   *m = &modelSettings[0];
+
+    if (dkPosted[chn] == YES)
+        DkWait (chn);
+    else if (dkLaunched[chn] == YES)
+        {
+        DkRunJob (chn);
+        __atomic_store_n (&dkJob[chn], DK_NONE, __ATOMIC_RELAXED);
+        }
+    DkRestore (chn);
+    theMove = dkMove[chn];
+    abortMove = dkAbort[chn];
+    lnPriorRatio = dkPriorRatio[chn];
+    lnProposalRatio = dkPropRatio[chn];
+
+    if (abortMove == NO)
+        {
+        lnLike = 0.0;
+        lnLike += m->lnLike[2*chn + state[chn]];
+        lnLikelihoodRatio = lnLike - curLnL[chn];
+        lnPrior = curLnPr[chn] + lnPriorRatio;
+
+#   ifndef NDEBUG
+        /* We check various aspects of calculations in debug version of code */
+        if (IsTreeConsistent(theMove->parm, chn, state[chn]) != YES)
+            {
+            printf ("DEBUG ERROR: IsTreeConsistent failed after move '%s'\n", theMove->name);
+            DkDrainAll ();
+            return ERROR;
+            }
+        if (lnPriorRatio != lnPriorRatio)
+            {
+            printf ("DEBUG ERROR: Log prior ratio nan after move '%s'\n", theMove->name);
+            DkDrainAll ();
+            return ERROR;
+            }
+        if (fabs((lnPrior-(dkLaunched[chn] == YES ? dkLogPrior[chn] : LogPrior(chn)))/lnPrior) > 0.0001)
+            {
+            printf ("DEBUG ERROR: Log prior incorrect after move '%s' :%e :%e\n", theMove->name,lnPrior,LogPrior(chn));
+            DkDrainAll ();
+            return ERROR;
+            }
+        if (lnProposalRatio != lnProposalRatio)
+            {
+            printf ("DEBUG ERROR: Log proposal ratio nan after move '%s'\n", theMove->name);
+            DkDrainAll ();
+            return ERROR;
+            }
+        if (lnLike != lnLike)
+            {
+            printf ("DEBUG ERROR: Log likelihood nan after move '%s'\n", theMove->name);
+            DkDrainAll ();
+            return ERROR;
+            }
+        if (theMove->parm->paramType == P_TOPOLOGY && GetTree (theMove->parm, chn, state[chn])->isClock == YES &&
+            IsClockSatisfied (GetTree (theMove->parm, chn, state[chn]),0.001) == NO)
+            {
+            printf ("%s   Branch lengths of the tree do not satisfy the requirements of a clock tree.\n", spacer);
+            ShowNodes(GetTree (theMove->parm, chn, state[chn])->root,0,YES);
+            DkDrainAll ();
+            return (ERROR);
+            }
+#   endif
+
+        /* heat */
+        lnLikelihoodRatio *= Temperature (chainId[chn]);
+        lnPriorRatio      *= Temperature (chainId[chn]);
+
+        /* calculate the acceptance probability */
+        if (lnLikelihoodRatio + lnPriorRatio + lnProposalRatio < -100.0)
+            r = 0.0;
+        else if (lnLikelihoodRatio + lnPriorRatio + lnProposalRatio > 0.0)
+            r = 1.0;
+        else
+            r = exp(lnLikelihoodRatio + lnPriorRatio + lnProposalRatio);
+        }
+
+    /* decide to accept or reject the move */
+    acceptMove = NO;
+    i = chainId[chn];
+    theMove->nTried[i]++;
+    theMove->nTotTried[i]++;
+    if (abortMove == NO && dkU[chn] < r)
+        {
+        acceptMove = YES;
+        theMove->nAccepted[i]++;
+        theMove->nTotAccepted[i]++;
+        }
+
+    /* update the chain */
+    if (acceptMove == NO)
+        {
+        /* the new state did not work out so shift chain back */
+        if (abortMove == NO)
+            ResetFlips(chn);
+        state[chn] ^= 1;
+        if (recalcScalers == YES)
+            {
+            recalculateScalers(chn);
+            recalcScalers = NO;
+            }
+        }
+    else
+        {
+        /* if the move is accepted then let the chain stay in the new state */
+        /* store the likelihood and prior of the chain */
+        curLnL[chn] = lnLike;
+        curLnPr[chn] = lnPrior;
+        }
+
+    /* check if time to autotune */
+    if (theMove->nTried[i] >= chainParams.tuneFreq)
+        {
+        theMove->lastAcceptanceRate[i] = (MrBFlt) theMove->nAccepted[i] / (MrBFlt) theMove->nTried[i];
+        theMove->nTried[i] = 0;
+        theMove->nAccepted[i] = 0;
+        theMove->nBatches[i]++;                                     /* we only autotune at most 10000 times */
+        if (chainParams.autotune == YES && theMove->moveType->Autotune != NULL && theMove->nBatches[i] < MAXTUNINGPARAM)
+            {
+            theMove->moveType->Autotune(theMove->lastAcceptanceRate[i],
+                                        theMove->targetRate[i],
+                                        theMove->nBatches[i],
+                                        &theMove->tuningParam[i][0],
+                                        theMove->moveType->minimum[0],
+                                        theMove->moveType->maximum[0]);
+            }
+        }
+
+    if (curLnL[chn] > maxLnL0[chainId[chn]])
+        maxLnL0[chainId[chn]] = curLnL[chn];
+
+    return (NO_ERROR);
+}
+
+
+/* The swaps RunChain attempts after a generation draw one random number each
+   from the main stream, whatever their outcome, so their place in the stream
+   is known before the chains are: reserve them, then attempt each run's swaps
+   as soon as that run's chains are done. Which chains to swap comes from the
+   separate swap stream, drawn here in RunChain's order. */
+static void DkReserveSwaps (RandLong *seed)
+{
+    int     r, j, k = 0;
+
+    for (r=0; r<chainParams.numRuns; r++)
+        for (j=0; j<chainParams.numSwaps; j++, k++)
+            {
+            GetSwappers (&dkSwapA[k], &dkSwapB[k], r);
+            dkSwapSeed[k] = *seed;
+            RandomNumber (seed);
+            }
+}
+
+
+static int DkSwaps (int run)
+{
+    int     j, k;
+
+    for (j=0; j<chainParams.numSwaps; j++)
+        {
+        k = run * chainParams.numSwaps + j;
+        if (AttemptSwap (dkSwapA[k], dkSwapB[k], &dkSwapSeed[k]) == ERROR)
+            {
+            DkDrainAll ();
+            MrBayesPrint ("%s   Unsuccessful swap of states\n", spacer);
+            return ERROR;
+            }
+        }
+    return (NO_ERROR);
+}
+
+
+/* Whether the next generations compute their likelihoods on the main thread
+   alone. Two threads normally finish a generation sooner than one; on a CPU
+   somebody else is also using they keep waiting for one another (each
+   generation waits for its slowest chain) and can be slower. So: measure the
+   generations per second in each way, over at least DK_ADAPT_NS at a time,
+   averaged with the earlier measurements of that way so that one disturbed
+   measurement does not decide; use the other way when it is clearly faster,
+   and measure it again every DK_ADAPT_EVERY measurements. Which thread
+   computes a likelihood changes nothing in it. */
+#define DK_ADAPT_NS         200000000LL
+#define DK_ADAPT_EVERY      64
+static double       dkRate[2];                  /* generations per ns, [NO] two threads, [YES] alone; 0 unknown */
+static long long    dkMeasNs = 0, dkMeasGens = 0;
+static int          dkSinceOther = 0;
+
+static void DkAdapt (long long wall, long long gens)
+{
+    int     best;
+    double  rate;
+
+    dkMeasNs += wall;
+    dkMeasGens += gens;
+    if (dkMeasNs < DK_ADAPT_NS)
+        return;
+    rate = (double) dkMeasGens / (double) dkMeasNs;
+    dkRate[dkSolo] = (dkRate[dkSolo] == 0.0) ? rate : 0.5 * (dkRate[dkSolo] + rate);
+    dkMeasNs = dkMeasGens = 0;
+    if (dkRate[!dkSolo] == 0.0)
+        {
+        dkSolo = !dkSolo;           /* measure the other way once */
+        return;
+        }
+    best = (dkRate[!dkSolo] > 1.05 * dkRate[dkSolo]) ? !dkSolo : dkSolo;
+    if (best != dkSolo)
+        {
+        dkSolo = best;
+        dkSinceOther = 0;
+        }
+    else if (++dkSinceOther >= DK_ADAPT_EVERY)
+        {
+        dkSolo = !dkSolo;           /* see whether the other way is faster now */
+        dkSinceOther = 0;
+        }
+}
+
+
+/* whether RunChain does anything but swap after generation g */
+static int DkEventAfter (long long g)
+{
+    if (g >= chainParams.numGen || g % chainParams.printFreq == 0 || g % chainParams.sampleFreq == 0)
+        return YES;
+    if (chainParams.mcmcDiagn == YES && g % chainParams.diagnFreq == 0)
+        return YES;
+    if (chainParams.checkPoint == YES && g % chainParams.checkFreq == 0)
+        return YES;
+    if (autoClose == NO || requestAbortRun == YES)
+        return YES;
+    return NO;
+}
+
+
+/* a move of generation g+1 failed (run r, chain fail): finish what the
+   original loop does before it -- the rest of generation g, then the chains
+   of g+1 moved before it -- and report it */
+static int DkFinishBeforeFailure (int r, int swapGen, int failChain, int fail)
+{
+    int     c, nc = chainParams.numChains;
+
+    for (r++; r<chainParams.numRuns; r++)
+        {
+        for (c=r*nc; c<(r+1)*nc; c++)
+            if (DkAccept (c) == ERROR)
+                return ERROR;
+        if (swapGen == YES && DkSwaps (r) == ERROR)
+            return ERROR;
+        }
+    for (c=0; c<failChain; c++)
+        if (DkAccept (c) == ERROR)
+            return ERROR;
+    return DkMoveFailed (fail, failChain);
+}
+
+
+/* Generations *n, *n+1, ... up to the next one after which RunChain does more
+   than swap; it is left at that generation, with its swaps still to do. The
+   chains are taken run by run: a run's acceptances, swaps and next moves are
+   done while the next run's likelihoods are being computed. Random numbers are
+   drawn in RunChain's order: every move of a generation, then its swaps. */
+static int DkGenerations (long long *nIo, RandLong *seed)
+{
+    long long   g, last, t0;
+    int         c, r, nc = chainParams.numChains, fail, swapGen;
+
+    if (dkPoolReady == NO && DkStartPool () == ERROR)
+        return (ERROR);
+    t0 = DkNowNs ();
+    for (last = *nIo; DkEventAfter (last) == NO; last++)
+        ;
+
+    if (dkSolo == YES)
+        {
+        /* alone: each chain's move, likelihood and acceptance in turn, as the
+           original loop does them; the same random numbers in the same order */
+        for (g = *nIo; ; g++)
+            {
+            for (c=0; c<numLocalChains; c++)
+                {
+                if ((fail = DkMove (c, seed)) != 0)
+                    return DkMoveFailed (fail, c);
+                if (DkAccept (c) == ERROR)
+                    return ERROR;
+                }
+            if (g == last)
+                break;
+            if (nc > 1 && g % chainParams.swapFreq == 0)
+                {
+                DkReserveSwaps (seed);
+                for (r=0; r<chainParams.numRuns; r++)
+                    if (DkSwaps (r) == ERROR)
+                        return ERROR;
+                }
+            }
+        DkAdapt (DkNowNs () - t0, last - *nIo + 1);
+        *nIo = last;
+        return (NO_ERROR);
+        }
+
+    for (c=0; c<numLocalChains; c++)
+        {
+        if ((fail = DkMove (c, seed)) != 0)
+            {
+            for (r=0; r<c; r++)
+                if (DkAccept (r) == ERROR)
+                    return ERROR;
+            return DkMoveFailed (fail, c);
+            }
+        }
+
+    for (g = *nIo; ; g++)
+        {
+        swapGen = (g < last && nc > 1 && g % chainParams.swapFreq == 0) ? YES : NO;
+        if (swapGen == YES)
+            DkReserveSwaps (seed);
+        for (r=0; r<chainParams.numRuns; r++)
+            {
+            for (c=r*nc; c<(r+1)*nc; c++)
+                if (DkAccept (c) == ERROR)
+                    return ERROR;
+            if (g == last)
+                continue;
+            if (swapGen == YES && DkSwaps (r) == ERROR)
+                return ERROR;
+            for (c=r*nc; c<(r+1)*nc; c++)
+                if ((fail = DkMove (c, seed)) != 0)
+                    return DkFinishBeforeFailure (r, swapGen, c, fail);
+            }
+        if (g == last)
+            break;
+        }
+    DkAdapt (DkNowNs () - t0, last - *nIo + 1);
+    *nIo = last;
+    return (NO_ERROR);
+}
+#endif
+
+
 int RunChain (RandLong *seed)
 {
     int         i, j, k, chn, swapA=0, swapB=0, whichMove, acceptMove;
@@ -16716,6 +17690,9 @@ int RunChain (RandLong *seed)
         TouchAllCijks (chn);
 
         abortMove = NO;
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+        DkUseScratch (chn);
+#   endif
         curLnL[chn] = LogLike(chn);
         curLnPr[chn] = LogPrior(chn);
         for (i=0; i<numCurrentDivisions; i++)
@@ -17128,6 +18105,14 @@ int RunChain (RandLong *seed)
             return ABORT;
 
         // RandLong oldSeed = *seed;  /* record the old seed for debugging */
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+        if (dkChainPar == YES)
+            {
+            if (DkGenerations (&n, seed) == ERROR)
+                return ERROR;
+            }
+        else
+#   endif
         for (chn=0; chn<numLocalChains; chn++)
             {
             /* Do Gibbs resampling of rate categories for current state if time to do so */
