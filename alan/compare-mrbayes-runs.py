@@ -47,8 +47,8 @@ def normalized(path):
 def main():
     a, b = sys.argv[1], sys.argv[2]
     quiet = '-q' in sys.argv[3:]
-    names_a = sorted(f for f in os.listdir(a) if not f.startswith('.'))
-    names_b = sorted(f for f in os.listdir(b) if not f.startswith('.'))
+    names_a = sorted(os.listdir(a))
+    names_b = sorted(os.listdir(b))
     bad = 0
     if names_a != names_b:
         print('different files:', sorted(set(names_a) ^ set(names_b)))

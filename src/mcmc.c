@@ -5935,6 +5935,12 @@ int InitChainCondLikes (void)
     /* Figure out how large cond like array is needed, and how many cond like, scaler and tiprob arrays are needed.
        Also check for possible use of Beagle */
     condLikesUsed = NO;
+#   if defined (DK_CHAIN_PAR)
+    /* Dikarya: decided afresh for each analysis (at division 0 below, which a
+       parsimony or continuous division 0 skips) */
+    dkChainPar = NO;
+    dkExtra = 0;
+#   endif
     for (d=0; d<numCurrentDivisions; d++)
         {
         m = &modelSettings[d];

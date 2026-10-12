@@ -129,6 +129,8 @@ takes about 5 minutes on 2 cores. Set `PREFIX` to install elsewhere, e.g.
 
 Built and tested on Ubuntu 24.04 with gcc 13.3 on x86-64. The fast kernels need
 AVX2; without it BEAGLE falls back to its original code, and results stay the same.
+Concurrent chains use POSIX threads, so a Windows build leaves them out and computes
+the chains one after the other, as stock MrBayes does (not tested on Windows).
 
 ## Using it
 
