@@ -34,6 +34,7 @@
 #include "mcmc.h"
 #include "model.h"
 #include "utils.h"
+#include "dikarya_par.h"
 
 // #define DEBUG_MB_BEAGLE_MULTIPART
 // #define DEBUG_MB_BEAGLE_MULTIPART_SITELNL
@@ -315,7 +316,7 @@ int createBeagleInstance(ModelInfo *m, int nCijkParts, int numRateCats, int numM
                                           numLocalTaxa - numPartAmbigTips,
                                           numModelStates,
                                           numChars,
-                                          ((numLocalChains + 1) * nCijkParts) * numCurrentDivisions,
+                                          ((numLocalChains + 1 + DkChainParExtraScratch()) * nCijkParts) * numCurrentDivisions,
                                           numTiProbs*nCijkParts,
                                           numRateCats,
                                           numScalers * nCijkParts,
@@ -380,8 +381,16 @@ MrBayesPrint ("%s      MODEL STATES: %d", spacer, numModelStates);
                 }
             }
         }
+    /* Dikarya: concurrent chains need BEAGLE's single-precision 4-state CPU
+       code, whose patched build keeps per-thread scratch, and an instance
+       that does no threading of its own */
+    if (dkChainPar == YES && (beagleInstance < 0 || strcmp (details.implName, "CPU-4State-Single") != 0
+                              || (details.flags & BEAGLE_FLAG_PRECISION_SINGLE) == 0))
+        dkChainPar = NO;
+    if (dkChainPar == YES)
+        beagleSetCPUThreadCount(beagleInstance, 1);
     /* set max number of CPU threads to be used by BEAGLE with CPU implementation */
-    if ((details.flags & BEAGLE_FLAG_FRAMEWORK_CPU) && beagleThreadCount > 1 && beagleThreadCount != 99)
+    else if ((details.flags & BEAGLE_FLAG_FRAMEWORK_CPU) && beagleThreadCount > 1 && beagleThreadCount != 99)
         {
         beagleSetCPUThreadCount(beagleInstance, beagleThreadCount);
         }
@@ -400,7 +409,6 @@ MrBayesPrint ("%s      MODEL STATES: %d", spacer, numModelStates);
 void LaunchBEAGLELogLikeForDivision(int chain, int d, ModelInfo* m, Tree* tree, MrBFlt* lnL)
 {
     int i, rescaleFreqNew;
-    int *isScalerNode;
     TreeNode *p;
     
     if (beagleScalingScheme == MB_BEAGLE_SCALE_ALWAYS) 
@@ -490,7 +498,8 @@ void LaunchBEAGLELogLikeForDivision(int chain, int d, ModelInfo* m, Tree* tree, 
                         m->rescaleFreqOld--;
                         m->rescaleFreqOld = (m->rescaleFreqOld ? m->rescaleFreqOld:1);
                         m->recalculateScalers = YES; 
-                        recalcScalers = YES;
+                        if (dkModelOverride == NULL) /* else passed on in chain order by RunChain */
+                            recalcScalers = YES;
                         }
                     }
                 rescaleFreqNew--;
@@ -498,6 +507,33 @@ void LaunchBEAGLELogLikeForDivision(int chain, int d, ModelInfo* m, Tree* tree, 
                 }
             m->successCount[chain] = 0;
     rescale_all:
+            if (dkModelOverride != NULL)
+                {
+                /* Dikarya: one of several chains computed at once. The rest flips
+                   the site scalers and the scaler-node flags, whose scratch space
+                   MrBayes shares between chains (and whose stale entries it reads),
+                   so RunChain does it in chain order: DkBeagleRescaleAll, then the
+                   count below. */
+                dkDeferred[chain] = YES;
+                dkDeferFreq[chain] = rescaleFreqNew;
+                return;
+                }
+            DkBeagleRescaleAll (chain, d, m, tree, lnL, rescaleFreqNew);
+            }
+        }
+    
+    /* Count number of evaluations */
+    m->beagleComputeCount[chain]++;
+}
+
+
+/* the numerical rescaling part of LaunchBEAGLELogLikeForDivision (dynamic scaling) */
+void DkBeagleRescaleAll (int chain, int d, ModelInfo* m, Tree* tree, MrBFlt* lnL, int rescaleFreqNew)
+{
+    int i;
+    int *isScalerNode;
+    TreeNode *p;
+
 #   if defined (DEBUG_MB_BEAGLE_FLOW)
             MrBayesPrint ("NUMERICAL RESCALING\n");
 #   endif
@@ -530,11 +566,6 @@ void LaunchBEAGLELogLikeForDivision(int chain, int d, ModelInfo* m, Tree* tree, 
                     }
                 }
             m->rescaleFreq[chain] = rescaleFreqNew;
-            }
-        }
-    
-    /* Count number of evaluations */
-    m->beagleComputeCount[chain]++;
 }
 
 
@@ -788,7 +819,7 @@ int TreeCondLikes_Beagle_No_Rescale (Tree *t, int division, int chain)
     unsigned            chil1Step, chil2Step;
     int                 *isScalerNode;
     
-    m = &modelSettings[division];
+    m = DK_MODEL(division);
     isScalerNode = m->isScalerNode[chain];
     
     op = 0;
@@ -889,7 +920,7 @@ int TreeCondLikes_Beagle_Rescale_All (Tree *t, int division, int chain)
     unsigned            chil1Step, chil2Step;
     int                 *isScalerNode;
     
-    m = &modelSettings[division];
+    m = DK_MODEL(division);
     isScalerNode = m->isScalerNode[chain];
     
     op = 0;
@@ -1000,7 +1031,7 @@ int TreeCondLikes_Beagle_Always_Rescale (Tree *t, int division, int chain)
     ModelInfo           *m;
     unsigned            chil1Step, chil2Step;
     
-    m = &modelSettings[division];
+    m = DK_MODEL(division);
     
     op = 0;
     scaleOp = 0;
@@ -1133,7 +1164,7 @@ int TreeLikelihood_Beagle (Tree *t, int division, int chain, MrBFlt *lnL, int wh
     p = t->root->left;
 
     /* find model settings and nStates, pInvar, invar cond likes */
-    m = &modelSettings[division];
+    m = DK_MODEL(division);
     
     nStates = m->numModelStates;
     if (m->pInvar == NULL)
@@ -1373,7 +1404,7 @@ int TreeTiProbs_Beagle (Tree *t, int division, int chain)
     ModelInfo   *m;
     
     /* get model settings */
-    m = &modelSettings[division];
+    m = DK_MODEL(division);
     
     /* find the correction factor to make branch lengths
        in terms of expected number of substitutions per character */

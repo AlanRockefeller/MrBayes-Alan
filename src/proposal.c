@@ -42,6 +42,7 @@
 #include "model.h"
 #include "proposal.h"
 #include "utils.h"
+#include "dikarya.h"
 
 /* debugging compiler statements */
 #undef  DEBUG_LOCAL
@@ -10434,7 +10435,7 @@ int Move_ParsSPR1 (Param *param, int chain, RandLong *seed, MrBFlt *lnPriorRatio
     /* Change topology (and branch lengths) using SPR (symmetric) biased according to parsimony scores,
        controlled by a window defined by a certain node distance radius. Note: w = e^{-S} */
     
-    int         i, j, k, n, division, topologyHasChanged, moveInRoot, nNeighbor, nRoot, nCrown, iA, jC, isVPriorExp;
+    int         dkWhole = NO, i, j, k, n, division, topologyHasChanged, moveInRoot, nNeighbor, nRoot, nCrown, iA, jC, isVPriorExp;
     BitsLong    *pA, *pB, *pP, *pC, *pD, y[2];
     MrBFlt      x, minV, maxV, minLength=0.0, length=0.0, *parLength=NULL, prob, ran, tuning, warpFactor,
                 sum1, sum2, tempsum, tempc, tempy;
@@ -10645,6 +10646,9 @@ int Move_ParsSPR1 (Param *param, int chain, RandLong *seed, MrBFlt *lnPriorRatio
             }  // this is slow at the moment */
         }
 
+#   if defined (DK_X86)
+    dkWhole = (DkEnabled() == YES) ? DkWeightsAreSmallIntegers (nSitesOfPat, numCompressedChars) : NO;
+#   endif
     /* need to alloc a matrix for parsimony lengths, an array of pointers to crown part,
        and an array of pointers to root part. */
     parLength = (MrBFlt *) SafeCalloc ((size_t)nRoot * (size_t)nCrown, sizeof(MrBFlt));
@@ -10690,7 +10694,12 @@ int Move_ParsSPR1 (Param *param, int chain, RandLong *seed, MrBFlt *lnPriorRatio
                     
                     if (m->nParsIntsPerSite == 1)
                         {
-                        for (k=0; k<m->numChars; k++)
+#   if defined (DK_X86)
+                        if (DkEnabled() == YES)
+                            length = DkParsJoinLength (pA, pB, pP, pP, nSites, m->numChars, dkWhole);
+                        else
+#   endif
+                            for (k=0; k<m->numChars; k++)
                             {
                             y[0] = (pA[k] | pB[k]) & pP[k];
                             if (y[0] == 0)
@@ -10716,7 +10725,12 @@ int Move_ParsSPR1 (Param *param, int chain, RandLong *seed, MrBFlt *lnPriorRatio
                     
                     if (m->nParsIntsPerSite == 1)
                         {
-                        for (k=0; k<m->numChars; k++)
+#   if defined (DK_X86)
+                        if (DkEnabled() == YES)
+                            length = DkParsJoinLength (pP, pP, pC, pD, nSites, m->numChars, dkWhole);
+                        else
+#   endif
+                            for (k=0; k<m->numChars; k++)
                             {
                             y[0] = pP[k] & (pC[k] | pD[k]);
                             if (y[0] == 0)
@@ -10743,7 +10757,12 @@ int Move_ParsSPR1 (Param *param, int chain, RandLong *seed, MrBFlt *lnPriorRatio
                     
                     if (m->nParsIntsPerSite == 1)
                         {
-                        for (k=0; k<m->numChars; k++)
+#   if defined (DK_X86)
+                        if (DkEnabled() == YES)
+                            length = DkParsJoinLength (pA, pB, pC, pD, nSites, m->numChars, dkWhole);
+                        else
+#   endif
+                            for (k=0; k<m->numChars; k++)
                             {
                             y[0] = (pA[k] | pB[k]) & (pC[k] | pD[k]);
                             if (y[0] == 0)
@@ -13111,7 +13130,7 @@ int Move_ParsTBR1 (Param *param, int chain, RandLong *seed, MrBFlt *lnPriorRatio
     /* Change topology and map branch lengths using TBR-type move biased according to parsimony scores,
        controlled by a window defined by a certain node distance radius. */
     
-    int         i, j, k, n, division, topologyHasChanged, nNeighbor, nRoot, nCrown, iA, jC, isVPriorExp, tempInt;
+    int         dkWhole = NO, i, j, k, n, division, topologyHasChanged, nNeighbor, nRoot, nCrown, iA, jC, isVPriorExp, tempInt;
     BitsLong    *pA, *pB, *pC, *pD, y[2];
     MrBFlt      x, minV, maxV, minLength=0.0, length=0.0, *parLength=NULL, prob, ran, tuning, warpFactor,
                 sum1, sum2, tempsum, tempc, tempy;
@@ -13311,6 +13330,9 @@ int Move_ParsTBR1 (Param *param, int chain, RandLong *seed, MrBFlt *lnPriorRatio
             }  // this is not used at the moment */
         }
 
+#   if defined (DK_X86)
+    dkWhole = (DkEnabled() == YES) ? DkWeightsAreSmallIntegers (nSitesOfPat, numCompressedChars) : NO;
+#   endif
     /* cycle through the possibilities and record the parsimony length */
     for (j=0; j<nCrown; j++)
         {
@@ -13336,7 +13358,12 @@ int Move_ParsTBR1 (Param *param, int chain, RandLong *seed, MrBFlt *lnPriorRatio
                 length = 0.0;
                 if (m->nParsIntsPerSite == 1)
                     {
-                    for (k=0; k<m->numChars; k++)
+#   if defined (DK_X86)
+                    if (DkEnabled() == YES)
+                        length = DkParsJoinLength (pC, pD, pA, pB, nSites, m->numChars, dkWhole);
+                    else
+#   endif
+                        for (k=0; k<m->numChars; k++)
                         {
                         y[0] = (pC[k] | pD[k]) & (pA[k] | pB[k]);
                         if (y[0] == 0)

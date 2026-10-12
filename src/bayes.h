@@ -3,7 +3,7 @@
 
 #ifdef HAVE_CONFIG_H
 #   include "config.h"
-#   define VERSION_NUMBER  PACKAGE_VERSION
+#   define VERSION_NUMBER  PACKAGE_VERSION "-dikarya2"
 #else  /* some defaults that would otherwise be guessed by configure */
 #   define PACKAGE_NAME "MrBayes"
 #   define PACKAGE_VERSION "3.2.8"
@@ -587,6 +587,9 @@ typedef struct node
     MrBFlt          nodeDepth;              /*!< node depth (height)                        */
     MrBFlt          age;                    /*!< age of node                                */
     Calibration     *calibration;           /*!< pointer to calibration data                */
+    MrBFlt          logLength;              /*!< log(lengthOfLog), cached by LogDirPrior    */
+    MrBFlt          lengthOfLog;            /*!< length that logLength was computed from    */
+    int             logLengthValid;         /*!< is logLength set? (nodes start zeroed)     */
     }
     TreeNode;
 
