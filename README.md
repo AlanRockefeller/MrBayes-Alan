@@ -1,5 +1,6 @@
 > **MrBayes-Alan** is MrBayes 3.2.9 made faster by Alan Rockefeller with Claude Opus 5.5,
-> with **byte-identical output** to stock MrBayes 3.2.9 for the same input and seed.
+> with **byte-identical output** to stock MrBayes 3.2.9 for the same input and seed
+> (with BEAGLE built as Linux distributions build it; see README-Alan.md).
 > On real fungal alignments it runs **1.7-1.9x faster on one thread** and **2.4-3.0x
 > faster on two** than stock 3.2.9. The speed comes from a patched BEAGLE library
 > (exact AVX2 kernels, no subnormal stalls) and from computing chains concurrently.

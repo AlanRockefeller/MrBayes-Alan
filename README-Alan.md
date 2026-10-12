@@ -6,8 +6,10 @@ MrBayes 3.2.9, made faster by Alan Rockefeller with Claude Opus 5.5 for
 **Same results, faster.** For the same input, options and seed, every output
 file -- sampled parameters and trees, `.mcmc` diagnostics, checkpoints, `sump` and
 `sumt` summaries -- and the screen output apart from timings, the run stamp and the
-version banners are byte-identical to stock MrBayes 3.2.9 with stock BEAGLE 4.0.1.
-That holds at one thread and at two, and for runs that end on
+version banners are byte-identical to stock MrBayes 3.2.9 with stock BEAGLE 4.0.1,
+both built the way Debian and Ubuntu build them. (That matters for BEAGLE:
+upstream's own build adds `-march=native`, which changes single-precision results;
+see below.) That holds at one thread and at two, and for runs that end on
 `Log likelihood nan`. Nothing about the MCMC changed; the speed comes from doing
 the same arithmetic in less time.
 
@@ -58,8 +60,8 @@ In BEAGLE (single-precision, 4-state CPU code, which is what MrBayes uses for DN
    that result is provably the IEEE one. Otherwise the block is redone with the risky
    multiplies in double precision, which is exact since it is one correctly rounded
    product. Which path runs changes the time, never a bit.
-4. **Calls on different buffers may run at the same time** (per-thread scratch), so
-   MrBayes can compute different chains at once.
+4. **Calls on different buffers may run at the same time** (per-thread scratch, with
+   or without AVX2), so MrBayes can compute different chains at once.
 5. **Exact threading by site pattern** for large alignments (768+ patterns) when
    chains cannot be split: the per-pattern log likelihoods are summed in pattern
    order, so results do not depend on the thread count. BEAGLE's own threading,
@@ -87,7 +89,8 @@ The MrBayes moves, priors, proposal ratios, scaling scheme and output are unchan
 
 ## How it was checked
 
-All comparisons are against stock 3.2.9 with stock BEAGLE 4.0.1, built the same way:
+All comparisons are against stock 3.2.9 with stock BEAGLE 4.0.1, built the same way
+(Ubuntu's compiler flags; BEAGLE without `-march=native`):
 
 - 44 real alignments (7 to 240 taxa) x 2 model/chain settings each: all 88 runs
   identical at one thread, and all 88 identical at two threads (with BEAGLE's
@@ -97,7 +100,8 @@ All comparisons are against stock 3.2.9 with stock BEAGLE 4.0.1, built the same 
   and NaN. Breaking the exact path by one ulp is caught.
 - Two real analyses that end on `Log likelihood nan`, run to the end at two threads:
   both stop at the same generation with identical output.
-- ThreadSanitizer, with both libraries instrumented: no data races.
+- ThreadSanitizer, with both libraries instrumented, on the AVX2 kernels and on
+  BEAGLE's original code (`BEAGLE_DIKARYA_SCALAR=1`): no data races.
 - Stock BEAGLE 4.0.1 built this way matches Ubuntu's BEAGLE 3.1.2 (88 of 88), and a
   rebuild of Ubuntu's MrBayes 3.2.7a with these flags gives the same output as the
   packaged binary (checked on one alignment), so the reference is built the way the

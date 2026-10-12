@@ -18,7 +18,8 @@
 #     unless every output file and stdout match (apart from timings, run stamps
 #     and version banners: see alan/compare-mrbayes-runs.py);
 #   - installs mb into $PREFIX/bin and the patched BEAGLE into $PREFIX/lib (mb
-#     finds it there by its run path).
+#     finds it there by its run path): staged and checked first, so that a
+#     failure leaves an existing installation as it was.
 #
 # Needs git, cmake, make, gcc/g++, python3, awk and network access to GitHub.
 # Built and verified on Ubuntu 24.04 (gcc 13.3, x86-64). The fast kernels need
@@ -28,6 +29,10 @@ set -euo pipefail
 VER=dikarya2
 PREFIX=${PREFIX:-$HOME/mrbayes-3.2.9-$VER}
 SRC=${SRC:-$PREFIX-build}
+# absolute paths: the build steps change directory, and mb's library run path
+# is $PREFIX/lib
+case "$PREFIX" in /*) ;; *) PREFIX=$PWD/$PREFIX ;; esac
+case "$SRC" in /*) ;; *) SRC=$PWD/$SRC ;; esac
 MB_UPSTREAM=https://github.com/NBISweden/MrBayes.git
 MB_BRANCH=release/v3.2.9
 MB_BASE=4f741bcfe41f65b7f4d560cec98614d3d9e29326
@@ -171,25 +176,45 @@ BEAGLE_DIKARYA_MIN_PATTERNS=1|set beaglethreadcount=2;|nst=1 rates=gamma||ngen=3
 EOF
 [ "$status" -eq 0 ] || { echo "not installed: this build does not reproduce stock MrBayes 3.2.9" >&2; exit 1; }
 
-# ---- install (new files replace old ones by rename: running jobs are fine) --
-mkdir -p "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/share"
+# ---- install -----------------------------------------------------------------
+# Everything is copied into a staging directory inside $PREFIX and checked
+# there first; only then is each file renamed into place (mb last). A rename
+# replaces a file in one step, and a running mb keeps the files it has open.
+# If anything fails before that, $PREFIX is left as it was.
+stage=$(mktemp -d "$PREFIX/.mrbayes-alan-stage.XXXXXX")
+trap 'rm -rf "$tmp" "$stage"' EXIT
+mkdir -p "$stage/bin" "$stage/lib" "$stage/share"
 for f in "$NEW_LIB"/libhmsbeagle*.so*; do
     if [ -L "$f" ]; then
-        ln -sfn "$(readlink "$f")" "$PREFIX/lib/$(basename "$f")"
+        ln -s "$(readlink "$f")" "$stage/lib/$(basename "$f")"
     else
-        install -m 0644 "$f" "$PREFIX/lib/$(basename "$f")"
+        install -m 0644 "$f" "$stage/lib/$(basename "$f")"
     fi
 done
-install -m 0755 "$NEW" "$PREFIX/bin/mb"
-install -m 0644 "$BG_PATCH" "$PREFIX/share/$(basename "$BG_PATCH")"
+install -m 0755 "$NEW" "$stage/bin/mb"
+install -m 0644 "$BG_PATCH" "$stage/share/$(basename "$BG_PATCH")"
+
+check_install() {  # <dir holding bin/mb> <label> [library path to use]
+    local d=$tmp/$2
+    mkdir -p "$d"; cp "$tmp/new1/input.nex" "$d/"
+    (cd "$d" && env -u LD_LIBRARY_PATH ${3:+LD_LIBRARY_PATH=$3} nice -n 10 "$1/bin/mb" input.nex > stdout.txt 2>&1) || true
+    grep -q "Using BEAGLE v4.0.1-$VER" "$d/stdout.txt" \
+        || { echo "$2 mb does not load the patched BEAGLE" >&2; return 1; }
+    python3 -I "$HERE/compare-mrbayes-runs.py" "$tmp/ref1" "$d" -q \
+        || { echo "$2 mb does not reproduce the self-test" >&2; return 1; }
+}
+# the staged copy with its own libraries (mb's run path is $PREFIX/lib, a
+# RUNPATH, which LD_LIBRARY_PATH overrides)
+check_install "$stage" staged "$stage/lib" || { echo "not installed" >&2; exit 1; }
+
+mkdir -p "$PREFIX/bin" "$PREFIX/lib" "$PREFIX/share"
+for f in "$stage"/lib/* "$stage"/share/* "$stage/bin/mb"; do
+    mv -fT "$f" "$PREFIX/${f#"$stage"/}"
+done
+rm -rf "$stage"
 
 # the installed binary, with no library path set, must load the patched
 # library from $PREFIX and still reproduce the first self-test case
-d=$tmp/installed; mkdir -p "$d"; cp "$tmp/new1/input.nex" "$d/"
-(cd "$d" && env -u LD_LIBRARY_PATH nice -n 10 "$PREFIX/bin/mb" input.nex > stdout.txt 2>&1) || true
-grep -q "Using BEAGLE v4.0.1-$VER" "$d/stdout.txt" \
-    || { echo "installed mb does not load $PREFIX/lib's BEAGLE" >&2; exit 1; }
-python3 -I "$HERE/compare-mrbayes-runs.py" "$tmp/ref1" "$d" -q \
-    || { echo "installed mb does not reproduce the self-test" >&2; exit 1; }
+check_install "$PREFIX" installed || exit 1
 echo "installed: $PREFIX/bin/mb ($("$PREFIX/bin/mb" -v | grep -i version | tr -s ' '))"
 echo "build files are in $SRC (safe to delete)"
