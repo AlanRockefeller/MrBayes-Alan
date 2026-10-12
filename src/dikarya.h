@@ -20,7 +20,9 @@
 #include <stdlib.h>
 #include <string.h>
 
-#if defined (__x86_64__) && defined (__GNUC__)
+/* only where BitsLong (unsigned long) is 64 bits: the kernels take four
+   BitsLong per 256-bit vector (not 64-bit Windows, where long is 32 bits) */
+#if defined (__x86_64__) && defined (__GNUC__) && defined (__LP64__)
 #   define DK_X86 1
 #   include <immintrin.h>
 #   define DK_AVX2 __attribute__((target("avx2")))

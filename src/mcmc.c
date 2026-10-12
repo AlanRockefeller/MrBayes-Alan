@@ -5766,6 +5766,7 @@ typedef struct
     } DkWorkArrays;
 
 static int          dkExtra = 0;        /* scratch sets beyond MrBayes's own: numLocalChains - 1 */
+static int          dkPoolReady = NO;   /* the helper threads and per-chain arrays exist */
 static DkScratchSet *dkScr = NULL;      /* [chain], division 1 */
 static int          dkInstalled = 0;    /* chain whose scratch set modelSettings[0] holds */
 static ModelInfo    *dkModel = NULL;    /* [chain]: private copy used by the likelihood thread */
@@ -5832,6 +5833,12 @@ static int DkChainParQualifies (void)
     return NO;  /* debugging code in RunChain's loop that DkMove and DkAccept do not reproduce */
 #   endif
     if (beagleThreadCount < 2 || beagleThreadCount == 99)
+        return NO;
+    /* The helper threads and per-chain arrays are made for the first analysis
+       that uses them. MrBayes ends the program rather than run a second
+       analysis with BEAGLE (InitBeagleInstance); should that change, a later
+       analysis runs without concurrent chains instead of reusing them. */
+    if (dkPoolReady == YES)
         return NO;
     if (numLocalChains < 2 || numLocalChains != chainParams.numRuns * chainParams.numChains ||
         numCurrentDivisions != 1 || numTrees != 1)
@@ -6081,6 +6088,12 @@ int InitChainCondLikes (void)
                     m->useBeagle = NO;
                 }
             }
+#   endif
+#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+        /* Dikarya: no concurrent chains if BEAGLE did not start after all (the
+           extra buffers counted for them then simply go unused) */
+        if (dkChainPar == YES && modelSettings[0].useBeagle == NO)
+            dkChainPar = NO;
 #   endif
         }
 
@@ -16694,7 +16707,6 @@ enum { DK_NONE = 0, DK_PENDING, DK_CLAIMED, DK_DONE };
 
 int     UpDateCijk (int whichPart, int whichChain);
 
-static int              dkPoolReady = NO;
 static int              *dkJob = NULL;              /* [chain]: DK_* */
 static int              dkSleepers = 0;
 static long             dkSpinNs = 300000;          /* how long a helper waits busily for work */
