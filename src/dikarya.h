@@ -28,7 +28,13 @@
 #   define DK_AVX2 __attribute__((target("avx2")))
 #endif
 
-__attribute__((unused)) static int DkEnabled (void)
+#if defined (__GNUC__)
+#   define DK_UNUSED __attribute__((unused))
+#else
+#   define DK_UNUSED
+#endif
+
+DK_UNUSED static int DkEnabled (void)
 {
     static int enabled = -1;
     if (enabled < 0)

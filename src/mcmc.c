@@ -54,7 +54,7 @@
 #include "utils.h"
 #include "dikarya.h"
 #include "dikarya_par.h"
-#if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#if defined (DK_CHAIN_PAR)
 #include <pthread.h>
 #include <sched.h>
 #include <time.h>
@@ -5740,10 +5740,10 @@ int InitAugmentedModels (void)
 -------------------------------------------------------------------------*/
 /* ---- Dikarya: concurrent chains (see dikarya_par.h) ---- */
 int                 dkChainPar = NO;
-__thread ModelInfo  *dkModelOverride = NULL;
+DK_THREAD_LOCAL ModelInfo *dkModelOverride = NULL;
 int                 *dkDeferred = NULL, *dkDeferFreq = NULL;
 
-#if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#if defined (DK_CHAIN_PAR)
 /* The scratch areas a chain flips its buffers with. MrBayes has one set,
    shared by all chains in turn; concurrent chains need one each. Not the site
    scaler and its scaler-node flags: MrBayes reads entries of the flag array it
@@ -5905,7 +5905,7 @@ static int DkAllocChainWork (ModelInfo *m)
 
 int DkChainParExtraScratch (void)
 {
-#if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#if defined (DK_CHAIN_PAR)
     return dkExtra;
 #else
     return 0;
@@ -5991,7 +5991,7 @@ int InitChainCondLikes (void)
         nIntNodes = GetTree(m->brlens, 0, 0)->nIntNodes;
         nNodes = GetTree(m->brlens, 0, 0)->nNodes;
 
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
         /* Dikarya: concurrent chains need a scratch set per chain */
         if (d == 0)
             {
@@ -6089,7 +6089,7 @@ int InitChainCondLikes (void)
                 }
             }
 #   endif
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
         /* Dikarya: no concurrent chains if BEAGLE did not start after all (the
            extra buffers counted for them then simply go unused) */
         if (dkChainPar == YES && modelSettings[0].useBeagle == NO)
@@ -6180,7 +6180,7 @@ int InitChainCondLikes (void)
             m->condLikeScratchIndex[i+numLocalTaxa] = clIndex;
             clIndex += indexStep;
             }
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
         if (dkChainPar == YES && d == 0)
             {
             dkScr = (DkScratchSet *) SafeCalloc (numLocalChains, sizeof (DkScratchSet));
@@ -6406,7 +6406,7 @@ int InitChainCondLikes (void)
             m->tiProbsScratchIndex[i] = tiIndex;
             tiIndex += indexStep;
             }
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
         if (dkChainPar == YES && d == 0)
             {
             for (j=1; j<numLocalChains; j++)
@@ -6446,7 +6446,7 @@ int InitChainCondLikes (void)
         m->unscaledNodesScratch = (int *) SafeCalloc (nNodes, sizeof (int));
         if (!m->unscaledNodesScratch)
             return (ERROR);
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
         if (dkChainPar == YES && d == 0)
             {
             for (j=1; j<numLocalChains; j++)
@@ -6497,7 +6497,7 @@ int InitChainCondLikes (void)
             scalerIndex += indexStep;
             }
         m->siteScalerScratchIndex = scalerIndex;
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
         if (dkChainPar == YES && d == 0)
             {
             scalerIndex += indexStep;   /* past MrBayes's own site scaler scratch */
@@ -6550,7 +6550,7 @@ int InitChainCondLikes (void)
             for (i=0; i<numLocalChains; i++)
                 m->cijkIndex[i] = i*indexStep;
             m->cijkScratchIndex = numLocalChains*indexStep;
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
             if (dkChainPar == YES && d == 0)
                 {
                 for (j=1; j<numLocalChains; j++)
@@ -6600,7 +6600,7 @@ int InitChainCondLikes (void)
                     beagleSetCategoryWeights(m->beagleInstance,
                                              m->cijkScratchIndex + divisionOffset,
                                              m->inWeights);
-#   if !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
                     if (dkChainPar == YES && d == 0)
                         {
                         for (j=1; j<numLocalChains; j++)
@@ -6615,7 +6615,7 @@ int InitChainCondLikes (void)
             }
 #   endif
 
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
         if (dkChainPar == YES && d == 0 && DkAllocChainWork (m) == ERROR)
             return (ERROR);
 #   endif
@@ -16680,7 +16680,7 @@ int ReusePreviousResults (int *numSamples, int steps)
 }
 
 
-#if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#if defined (DK_CHAIN_PAR)
 /* ---- Dikarya: generations with the chains' likelihoods computed concurrently ----
 
    The loop in RunChain does, for each chain in turn: copy the state, pick and
@@ -17702,7 +17702,7 @@ int RunChain (RandLong *seed)
         TouchAllCijks (chn);
 
         abortMove = NO;
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
         DkUseScratch (chn);
 #   endif
         curLnL[chn] = LogLike(chn);
@@ -18117,7 +18117,7 @@ int RunChain (RandLong *seed)
             return ABORT;
 
         // RandLong oldSeed = *seed;  /* record the old seed for debugging */
-#   if defined (BEAGLE_ENABLED) && !defined (MPI_ENABLED)
+#   if defined (DK_CHAIN_PAR)
         if (dkChainPar == YES)
             {
             if (DkGenerations (&n, seed) == ERROR)
