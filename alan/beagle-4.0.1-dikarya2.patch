@@ -1,7 +1,7 @@
 From fab7bd92c13ee2ce0599b5ceece009c7264cb56c Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Fri, 9 Oct 2026 11:16:42 +0000
-Subject: [PATCH 1/5] Build without -march=native
+Subject: [PATCH 1/6] Build without -march=native
 
 With -march=native gcc may fuse a*b+c into an FMA in the scalar kernels
 (g++ contracts even in -std=c++11), which changes single-precision
@@ -32,7 +32,7 @@ index b8e37830..92c1bf2e 100644
 From 3e75f0727e1ab8bb077cdf2704f1e7291ed61329 Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Fri, 9 Oct 2026 11:16:42 +0000
-Subject: [PATCH 2/5] CPU 4-state single precision: exact AVX2 kernels
+Subject: [PATCH 2/6] CPU 4-state single precision: exact AVX2 kernels
 
 AVX2 versions of the kernels MrBayes spends its time in when it runs
 BEAGLE's CPU-4State-Single implementation: calcStatesStates,
@@ -658,7 +658,7 @@ index 00000000..8a611a73
 From ce198194e49e511edf9d6e837d4ed5dc0fc2642c Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Fri, 9 Oct 2026 21:29:26 +0000
-Subject: [PATCH 3/5] CPU 4-state single precision: no subnormal assists; exact
+Subject: [PATCH 3/6] CPU 4-state single precision: no subnormal assists; exact
  threading
 
 Two changes to the same code paths.
@@ -2267,7 +2267,7 @@ index 00000000..1417689a
 From d4593a30136928882f57e343b8737f602a81888b Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Fri, 9 Oct 2026 22:01:22 +0000
-Subject: [PATCH 4/5] CPU 4-state single precision: calls for different buffers
+Subject: [PATCH 4/6] CPU 4-state single precision: calls for different buffers
  may run concurrently
 
 MrBayes (3.2.9-dikarya2) can compute the likelihoods of different MCMC chains
@@ -2522,10 +2522,133 @@ index 50819503..b2720b03 100644
 2.43.0
 
 
-From a27349d54b7f873d5b5cacc3aae6fd7b7c48f90d Mon Sep 17 00:00:00 2001
+From 6a02b1dfdf9cc2c249321abc0c35662b38a1c1ce Mon Sep 17 00:00:00 2001
+From: Alan Rockefeller <alanrockefeller@gmail.com>
+Date: Mon, 12 Oct 2026 07:13:53 +0000
+Subject: [PATCH 5/6] Concurrent calls without AVX2: the original edge path
+ uses per-thread buffers too
+
+Without AVX2, or with BEAGLE_DIKARYA_SCALAR set, the 4-state edge likelihood
+runs BEAGLE's original code, which wrote the instance's integrationTmp and
+outLogLikelihoodsTmp, so two threads computing different chains at once
+(MrBayes 3.2.9-dikarya2) would have overwritten each other's work. It now
+writes the calling thread's buffers, as the AVX2 path does:
+integrateOutStatesAndScale takes an optional output buffer (default: the
+instance's, as before, for every other caller).
+
+Every likelihood entry point (root and edge, by partition or not) now first
+marks that the calling thread's buffer does not hold its site log
+likelihoods, and the edge paths mark that it does once they have written it,
+so getSiteLogLikelihoods returns whatever was computed last on that thread,
+root or edge.
+
+The same arithmetic on the same operands in the same order; only where the
+intermediate values are kept changed.
+---
+ libhmsbeagle/CPU/BeagleCPU4StateImpl.h   |  3 ++-
+ libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp | 16 +++++++++++++---
+ libhmsbeagle/CPU/BeagleCPUImpl.hpp       |  4 ++++
+ 3 files changed, 19 insertions(+), 4 deletions(-)
+
+diff --git a/libhmsbeagle/CPU/BeagleCPU4StateImpl.h b/libhmsbeagle/CPU/BeagleCPU4StateImpl.h
+index b189e2b1..a86436bf 100644
+--- a/libhmsbeagle/CPU/BeagleCPU4StateImpl.h
++++ b/libhmsbeagle/CPU/BeagleCPU4StateImpl.h
+@@ -232,7 +232,8 @@ public:
+     inline int integrateOutStatesAndScale(const REALTYPE* integrationTmp,
+                                            const int stateFrequenciesIndex,
+                                            const int scalingFactorsIndex,
+-                                           double* outSumLogLikelihood);
++                                           double* outSumLogLikelihood,
++                                          REALTYPE* outLog = NULL);
+ 
+     inline void integrateOutStatesAndScaleByPartition(const REALTYPE* integrationTmp,
+                                                      const int* stateFrequenciesIndices,
+diff --git a/libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp b/libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp
+index 653a6d97..fd51bf27 100644
+--- a/libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp
++++ b/libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp
+@@ -623,7 +623,12 @@ BEAGLE_CPU_TEMPLATE
+ int inline BeagleCPU4StateImpl<BEAGLE_CPU_GENERIC>::integrateOutStatesAndScale(const REALTYPE* integrationTmp,
+                                                                       const int stateFrequenciesIndex,
+                                                             const int scalingFactorsIndex,
+-                                                            double* outSumLogLikelihood) {
++                                                            double* outSumLogLikelihood,
++                                                            REALTYPE* outLog) {
++    /* Dikarya: the site log likelihoods go to outLog when given (a calling
++       thread's own buffer), else to the instance's, as before */
++    REALTYPE* const outLogLikelihoodsTmp = (outLog != NULL) ? outLog : this->outLogLikelihoodsTmp;
++
+ 
+     int returnCode = BEAGLE_SUCCESS;
+ 
+@@ -1005,7 +1010,10 @@ int BeagleCPU4StateImpl<BEAGLE_CPU_GENERIC>::calcEdgeLogLikelihoods(const int pa
+     }
+ #endif
+ 
+-    this->dkScratch().outLogHere = false;
++    /* this thread's buffers here too (no AVX2, or BEAGLE_DIKARYA_SCALAR set),
++       so that concurrent calls do not share them; the same arithmetic */
++    typename BeagleCPUImpl<BEAGLE_CPU_GENERIC>::DkScratch& dkThread = this->dkScratch();
++    REALTYPE* integrationTmp = dkThread.integration.data();
+     memset(integrationTmp, 0, (kPatternCount * kStateCount)*sizeof(REALTYPE));
+ 
+     if (childIndex < kTipCount && gTipStates[childIndex]) { // Integrate against a state at the child
+@@ -1073,7 +1081,9 @@ int BeagleCPU4StateImpl<BEAGLE_CPU_GENERIC>::calcEdgeLogLikelihoods(const int pa
+         }
+     }
+ 
+-    return integrateOutStatesAndScale(integrationTmp, stateFrequenciesIndex, scalingFactorsIndex, outSumLogLikelihood);
++    dkThread.outLogHere = true;
++    return integrateOutStatesAndScale(integrationTmp, stateFrequenciesIndex, scalingFactorsIndex, outSumLogLikelihood,
++                                      dkThread.outLog.data());
+ }
+ 
+ BEAGLE_CPU_TEMPLATE
+diff --git a/libhmsbeagle/CPU/BeagleCPUImpl.hpp b/libhmsbeagle/CPU/BeagleCPUImpl.hpp
+index dfef629a..73d88fa9 100644
+--- a/libhmsbeagle/CPU/BeagleCPUImpl.hpp
++++ b/libhmsbeagle/CPU/BeagleCPUImpl.hpp
+@@ -2478,6 +2478,7 @@ BEAGLE_CPU_TEMPLATE
+                                                                        const int *cumulativeScaleIndices,
+                                                                        int count,
+                                                                        double *outSumLogLikelihood) {
++    this->dkScratch().outLogHere = false;   /* Dikarya: see getSiteLogLikelihoods */
+ 
+     if (count == 1) {
+         // We treat this as a special case so that we don't have convoluted logic
+@@ -2537,6 +2538,7 @@ BEAGLE_CPU_TEMPLATE
+                                                                   int count,
+                                                                   double* outSumLogLikelihoodByPartition,
+                                                                   double* outSumLogLikelihood) {
++    this->dkScratch().outLogHere = false;   /* Dikarya: see getSiteLogLikelihoods */
+ 
+     int returnCode = BEAGLE_SUCCESS;
+ 
+@@ -3108,6 +3110,7 @@ BEAGLE_CPU_TEMPLATE
+                                                              double* outSumLogLikelihood,
+                                                              double* outSumFirstDerivative,
+                                                              double* outSumSecondDerivative) {
++    this->dkScratch().outLogHere = false;   /* Dikarya: see getSiteLogLikelihoods */
+     // TODO: implement for count > 1
+ 
+     if (count == 1) {
+@@ -3204,6 +3207,7 @@ BEAGLE_CPU_TEMPLATE
+                                                     double* outSumFirstDerivative,
+                                                     double* outSumSecondDerivativeByPartition,
+                                                     double* outSumSecondDerivative) {
++    this->dkScratch().outLogHere = false;   /* Dikarya: see getSiteLogLikelihoods */
+ 
+     int returnCode = BEAGLE_SUCCESS;
+ 
+-- 
+2.43.0
+
+
+From af52ffc4b428629236999db17441126fefabc70d Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Sat, 10 Oct 2026 03:06:13 +0000
-Subject: [PATCH 5/5] Version 4.0.1-dikarya2
+Subject: [PATCH 6/6] Version 4.0.1-dikarya2
 
 The release tag still printed 4.0.1 (PRE-RELEASE); name the patched build so
 that a MrBayes log shows which library ran. MrBayes 3.2.9-dikarya2 computes
