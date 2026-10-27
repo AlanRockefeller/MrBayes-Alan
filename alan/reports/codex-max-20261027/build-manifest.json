@@ -1,0 +1,17 @@
+{
+  "baseline_binary_sha256": "5809edcfe50c223240d03f557184008618de08fff2b68d46be9f4c3416688288",
+  "artifacts": {
+    "optimization/install/bin/mb": "1e2b43ca40e1072ee11b563efc4b76044ded43a3ae5f40c493aef035e4d93df4",
+    "optimization/install/lib/libhmsbeagle.so.1": "1ed03a0b2895d4831d2a12c9e46c734a292aa671e30cc385a8c7109cf39898f1",
+    "optimization/install/lib/libhmsbeagle-cpu.so.40.0.0": "55348e69cfd7d0b2e5c3fa3ed5197fa3ecd31c8ee77d61ba97fd9683a5596a5c"
+  },
+  "sources": {
+    "mb-dikarya2/src/mcmc.c": "2dfc0bfe0ad8f134106b11861867d571170995aab79d398c954acc1a378122a0",
+    "bg-dikarya2/libhmsbeagle/CPU/DikaryaAVX.h": "7c885623c65b5c69529b264318129958670ee1ac78b6c947eeded4870c31cc77",
+    "bg-dikarya2/libhmsbeagle/CPU/EigenDecompositionCube.h": "4d767be692e88e105afa6f4a5f352c9a4d3c3f52b5afbd0fe3d76ab214af12b0",
+    "bg-dikarya2/libhmsbeagle/CPU/EigenDecompositionCube.hpp": "5809d4c7c9bb7a971affe9aa1e70c3fd33f06ac22ac6fd6f57f367eab2978512"
+  },
+  "python": "3.12.3",
+  "compiler": "gcc (Ubuntu 13.3.0-6ubuntu2~24.04.1) 13.3.0",
+  "build_script_sha256": "5a04a464c488dd4fdec5f5091cbbde124e68bec441c056488cdfd4eed06fb412"
+}

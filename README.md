@@ -1,13 +1,13 @@
-> **MrBayes-Alan** is MrBayes 3.2.9 made faster by Alan Rockefeller with Claude Opus 5.5,
-> with **byte-identical output** to stock MrBayes 3.2.9 for the same input and seed
-> (with BEAGLE built as Linux distributions build it; see README-Alan.md).
-> On real fungal alignments it runs **1.7-1.9x faster on one thread** and **2.4-3.0x
-> faster on two** than stock 3.2.9. The speed comes from a patched BEAGLE library
-> (exact AVX2 kernels, no subnormal stalls) and from computing chains concurrently.
-> See **[README-Alan.md](README-Alan.md)** for what changed, the benchmarks, how it was
-> checked, and how to build it (`bash alan/build-mrbayes-alan.sh`).
+> **MrBayes-Alan** optimizes MrBayes 3.2.9 for Dikarya. The latest **Codex max**
+> pass adds exact SIMD transition matrices, reusable tip-state products and a
+> default-prior shortcut. On tested one-thread workloads it used **43.3–51.9% less
+> CPU than stock 3.2.9** (1.76–2.08× CPU throughput), and **2.0–7.5% less CPU than
+> the previous optimization** in a separate campaign. Scientific outputs matched
+> byte for byte after timing/run-ID/banner normalization; two-thread gains over
+> the previous build were mixed. See **[README-Alan.md](README-Alan.md)** for
+> benchmarks, changes, exactness checks, build instructions and future ideas.
 >
-> The original MrBayes README follows.
+> The original optimization used Claude Opus 5.5. The original MrBayes README follows.
 
 ---
 

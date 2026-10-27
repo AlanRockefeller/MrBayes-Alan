@@ -1,0 +1,14 @@
+Version:   3.2.9-dikarya2
+self-test ok:   lset nst=6 rates=gamma; mcmc ngen=3000 nchains=4 nruns=2 samplefreq=20 printfreq=500 mcmcdiagn=yes stoprule=yes stopval=0.01
+self-test ok:   lset nst=2 rates=invgamma; mcmc ngen=2000 nchains=4 nruns=2 samplefreq=20 printfreq=500 mcmcdiagn=yes stoprule=yes stopval=0.01
+self-test ok:   lset nst=1 rates=equal; mcmc ngen=2000 nchains=4 nruns=2 samplefreq=20 printfreq=500
+self-test ok:   lset nst=6 rates=propinv; mcmc ngen=2000 nchains=4 nruns=2 samplefreq=20 printfreq=500
+self-test ok:   lset nst=1 rates=gamma; mcmc ngen=3000 nchains=1 nruns=1 samplefreq=20 printfreq=500
+self-test ok:   lset nst=6 rates=invgamma; mcmc ngen=2000 nchains=3 nruns=3 samplefreq=20 printfreq=500
+self-test ok:   lset nst=6 rates=gamma; mcmc ngen=3000 nchains=4 nruns=2 samplefreq=20 printfreq=500 mcmcdiagn=yes stoprule=yes stopval=0.01 (set beaglethreadcount=2;)
+self-test ok:   lset nst=2 rates=invgamma; mcmc ngen=2000 nchains=4 nruns=2 samplefreq=20 printfreq=500 mcmcdiagn=yes stoprule=yes stopval=0.01 (set beaglethreadcount=2;)
+self-test ok:   lset nst=6 rates=invgamma; mcmc ngen=2000 nchains=3 nruns=3 samplefreq=20 printfreq=500 (set beaglethreadcount=2;)
+self-test ok:   lset nst=1 rates=equal; mcmc ngen=2000 nchains=2 nruns=2 samplefreq=20 printfreq=500 (set beaglethreadcount=2;)
+self-test ok:   lset nst=1 rates=gamma; mcmc ngen=3000 nchains=1 nruns=1 samplefreq=20 printfreq=500 (set beaglethreadcount=2;)
+installed: /tmp/mrbayes-alan-pr.FUWsvE-install/bin/mb (Version: 3.2.9-dikarya2)
+build files are in /tmp/mrbayes-alan-pr.FUWsvE-build (safe to delete)

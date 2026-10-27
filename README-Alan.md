@@ -1,114 +1,282 @@
 # MrBayes-Alan
 
-MrBayes 3.2.9, made faster by Alan Rockefeller with Claude Opus 5.5 for
-[Dikarya](https://dikarya.us), where it builds the Bayesian trees.
+MrBayes 3.2.9, optimized by Alan Rockefeller for [Dikarya](https://dikarya.us).
+The original pass used Claude Opus 5.5; the newest pass used **Codex with max
+reasoning (“codex max”), 2026-10-27**.
 
-**Same results, faster.** For the same input, options and seed, every output
-file -- sampled parameters and trees, `.mcmc` diagnostics, checkpoints, `sump` and
-`sumt` summaries -- and the screen output apart from timings, the run stamp and the
-version banners are byte-identical to stock MrBayes 3.2.9 with stock BEAGLE 4.0.1,
-both built the way Debian and Ubuntu build them. (That matters for BEAGLE:
-upstream's own build adds `-march=native`, which changes single-precision results;
-see below.) That holds at one thread and at two, and for runs that end on
-`Log likelihood nan`. Nothing about the MCMC changed; the speed comes from doing
-the same arithmetic in less time.
+The latest changes accelerate transition matrices, reuse tip-state products and
+skip zero-weight terms in the default branch-length prior while preserving the
+original arithmetic. Build this checkout with `bash alan/build-mrbayes-alan.sh`;
+it includes the matching BEAGLE patch and checks output identity before installing.
 
-## How much faster
+The measurements below come from the optimization workspace and its frozen
+production `dikarya2` reference. This checkout packages the same optimizations
+on top of `main`, preserving its additional portability and threading fixes,
+and adds an alias fallback found during integration. The timing tables precede
+that fallback; they identify the measured campaign builds.
+The [evidence notes](alan/reports/codex-max-20261027/README.md) distinguish the
+campaign measurements from checks of the integrated repository build.
 
-Real fungal DNA alignments from Dikarya jobs, with its settings (GTR+G, 2 runs x 4
-chains, sample every 500 generations, split-frequency stop rule), a fixed number of
-generations, wall time. Intel Xeon E5-2690 v4, 2 vCPUs, Ubuntu 24.04. The builds were run
-interleaved (A B B A), each run on an otherwise idle host.
+## How much faster?
 
-| taxa x site patterns | generations | stock 3.2.9 | MrBayes-Alan, 1 thread | MrBayes-Alan, 2 threads |
-|---|---|---|---|---|
-| 36 x 394 | 100,000 | 85.3 s | 45.5 s (1.88x) | 28.8 s (2.96x) |
-| 34 x 342 | 100,000 | 65.8 s | 37.7 s (1.74x) | 23.5 s (2.79x) |
-| 129 x 209 | 30,000 | 59.7 s | 33.5 s (1.78x) | 21.0 s (2.84x) |
-| 134 x 195 | 30,000 | 64.2 s | 37.1 s (1.73x) | 24.3 s (2.64x) |
-| 240 x 564 | 6,000 | 47.3 s | 27.3 s (1.73x) | 19.3 s (2.44x) |
-| 188 x 1191 | 3,000 | 36.0 s | 21.3 s (1.69x) | 15.1 s (2.39x) |
+There are two different comparisons: the total improvement over stock, and the
+additional improvement over the already optimized `dikarya2` build. A speedup is
+**reference time / latest time**. CPU-time reduction is
+**100 × (1 − latest CPU time / reference CPU time)**; these percentages are not
+interchangeable with a percentage increase in throughput.
 
-Against Ubuntu's packaged MrBayes 3.2.7a, which Dikarya ran before: 1.60-1.77x
-faster on one thread and 2.29-2.72x on two. A 129-taxon analysis of a million
-generations that took 33 minutes now takes about 13 on two threads.
+### Latest build versus stock MrBayes
 
-Both builds use the same compiler flags as Ubuntu's `mrbayes` package and
-`--enable-debug`, as Ubuntu builds it (that is what keeps the `Log likelihood nan`
-check). Stock 3.2.9 here is upstream's `release/v3.2.9` at `4f741bc`.
+“Stock” here means **MrBayes 3.2.9, commit `4f741bc`, with BEAGLE 4.0.1's ordinary
+CPU kernels**. Its build disables `-march=native`, matching the distribution's
+floating-point configuration and preventing FMA contraction. The campaign reference was
+`build-mb-stock/src/mb` with `bg-stock-inst/lib` in the optimization workspace.
+It includes BEAGLE acceleration.
 
-## What changed
+The direct comparison uses three real Dikarya alignments, GTR+Gamma, two runs
+of four chains, fixed production seeds, samplefreq=500, and one requested thread.
+The host exposes two virtual CPUs (Xeon E5-2690 v4, AVX2), running Ubuntu 24.04
+with GCC 13.3.
+Each build runs twice in stock/latest/latest/stock order. Every comparison also
+checks all output files and stdout. CPU time is user plus system time for the
+MrBayes process; wall time includes interference from other work on the host.
 
-Most of a MrBayes run is spent in [BEAGLE](https://github.com/beagle-dev/beagle-lib),
-the library it computes likelihoods with, so MrBayes-Alan comes with a patched
-BEAGLE 4.0.1: `alan/beagle-4.0.1-dikarya2.patch`. Each commit message gives the
-argument for why its results are exact, and what it measured.
+**The latest build provides 1.76–2.08× CPU throughput versus stock, using
+43.3–51.9% less CPU time on these one-thread workloads.** Measured wall-clock
+speedups were **1.81–2.16×** in this campaign.
 
-In BEAGLE (single-precision, 4-state CPU code, which is what MrBayes uses for DNA):
+| Input | Generations | Stock CPU s | Latest CPU s | CPU speedup | CPU time saved | Stock wall s | Latest wall s | Wall speedup |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| yb4s | 25,000 | 21.80 | 11.20 | 1.947× | 48.6% | 22.68 | 11.29 | 2.008× |
+| tr9b | 10,000 | 23.08 | 11.09 | 2.080× | 51.9% | 24.31 | 11.25 | 2.162× |
+| cad46114 | 2,000 | 23.33 | 13.23 | 1.763× | 43.3% | 24.31 | 13.45 | 1.807× |
 
-1. **Built without `-march=native`.** Upstream's CMake forces it, and g++ then fuses
-   multiplies and adds into FMAs, which changes single-precision results. Debian and
-   Ubuntu build without it, and so does the stock reference here.
-2. **AVX2 kernels** for every likelihood update MrBayes makes (partials from two
-   partials, a tip and partials, two tips; the edge likelihood; rescaling). They
-   do the same IEEE operations on the same operands in the same order as the
-   original, two site patterns per 256-bit vector, never an FMA.
-3. **No subnormal stalls.** On large trees, partial likelihoods routinely become
-   subnormal, and on Intel CPUs every float multiply that touches one costs a
-   ~120-cycle microcode assist: half the kernel time on a 129-taxon tree. Each block
-   is first computed with flush-to-zero on. If the CPU's underflow flag stays clear,
-   that result is provably the IEEE one. Otherwise the block is redone with the risky
-   multiplies in double precision, which is exact since it is one correctly rounded
-   product. Which path runs changes the time, never a bit.
-4. **Calls on different buffers may run at the same time** (per-thread scratch, with
-   or without AVX2), so MrBayes can compute different chains at once.
-5. **Exact threading by site pattern** for large alignments (768+ patterns) when
-   chains cannot be split: the per-pattern log likelihoods are summed in pattern
-   order, so results do not depend on the thread count. BEAGLE's own threading,
-   which sums per partition and so changes results, is not used.
+See the [stock comparison summary](alan/reports/codex-max-20261027/readme-stock-summary.json)
+and [individual measurements and commands](alan/reports/codex-max-20261027/readme-stock-raw.json).
+The stock samples encountered more background work than the latest-build samples,
+so wall-time ratios include that scheduling effect; CPU ratios show the reduction
+in process CPU consumption. This campaign also had less contention than the
+previous-build campaign below, so compare builds within each table.
 
-In MrBayes (`src/`, four commits on top of `4f741bc`):
+These are whole analyses at the listed generation counts, including setup and
+summaries. They are measurements of these workloads, not a claim that every
+alignment gets the same speedup. The direct stock comparison above is at one
+thread; the latest build has not been remeasured against stock at two threads
+in this documentation pass.
 
-1. **Chains computed concurrently.** With `set beaglethreadcount=2`, each
-   generation's eight chain likelihoods are computed two at a time. Every random
-   number is still drawn on the main thread in MrBayes's order: a chain's move and
-   its acceptance draw together, and each chain swap's draw kept in its place. So it
-   is the same run. Each chain gets its own scratch buffers. The one piece of scratch
-   MrBayes genuinely shares between chains (the scaler-node flags used in numerical
-   rescaling, whose stale entries it reads) is still handled on the main thread in
-   chain order. Two threads are not always faster: next to another busy process
-   they keep waiting for each other. So the run measures its speed both ways and
-   uses the faster.
-2. **Parsimony-biased moves** (ParsSPR, ParsTBR) in AVX2: exact set algebra, and
-   integer sums of integer site weights (checked at run time).
-3. **`log(branch length)` remembered per node** for the gamma-Dirichlet branch-length
-   prior, which summed it over every branch twice per move.
-4. Version `3.2.9-dikarya2` (BEAGLE `4.0.1-dikarya2`), so a log names the build.
+### Latest build versus the previous optimization
 
-The MrBayes moves, priors, proposal ratios, scaling scheme and output are unchanged.
+The previous reference is the original **MrBayes 3.2.9-dikarya2 + BEAGLE
+4.0.1-dikarya2** pair. The frozen executable in `optimization/baseline/mb` is
+byte-identical to `/opt/mrbayes-3.2.9-dikarya2/bin/mb`. Both previous and latest
+builds retain those version banners; use the
+[build manifest](alan/reports/codex-max-20261027/build-manifest.json) to identify the new
+binary and library hashes.
 
-## How it was checked
+The preceding optimization campaign measured the following ABBA averages on
+this two-vCPU host. It had substantial background computation, typically around
+one CPU. **At one thread, the newest changes provide 1.021–1.081× CPU throughput,
+or 2.1–8.1% faster CPU throughput and 2.0–7.5% less CPU time.**
 
-All comparisons are against stock 3.2.9 with stock BEAGLE 4.0.1, built the same way
-(Ubuntu's compiler flags; BEAGLE without `-march=native`):
+| Input | Threads | Generations | Previous CPU s | Latest CPU s | CPU speedup | Previous wall s | Latest wall s |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| yb4s — 36 taxa, 394 patterns | 1 | 25,000 | 13.72 | 12.95 | 1.059× | 19.29 | 17.92 |
+| tr9b — 129 taxa, 209 patterns | 1 | 10,000 | 13.94 | 12.89 | 1.081× | 17.36 | 17.91 |
+| cad46114 — 188 taxa, 1191 patterns | 1 | 2,000 | 15.79 | 15.46 | 1.021× | 20.89 | 21.31 |
+| yb4s | 2 | 25,000 | 14.14 | 14.54 | 0.973× | 17.14 | 14.91 |
+| tr9b | 2 | 10,000 | 15.45 | 13.60 | 1.136× | 14.43 | 14.85 |
+| cad46114 | 2 | 2,000 | 15.98 | 16.16 | 0.989× | 15.04 | 16.13 |
 
-- 44 real alignments (7 to 240 taxa) x 2 model/chain settings each: all 88 runs
-  identical at one thread, and all 88 identical at two threads (with BEAGLE's
-  pattern threading forced on where chains are not split).
-- The BEAGLE kernels, stock and patched, compiled side by side and compared bit for
-  bit on more than 120,000 random cases, including zeros, -0, subnormals, infinities
-  and NaN. Breaking the exact path by one ulp is caught.
-- Two real analyses that end on `Log likelihood nan`, run to the end at two threads:
-  both stop at the same generation with identical output.
-- ThreadSanitizer, with both libraries instrumented, on the AVX2 kernels and on
-  BEAGLE's original code (`BEAGLE_DIKARYA_SCALAR=1`): no data races.
-- Stock BEAGLE 4.0.1 built this way matches Ubuntu's BEAGLE 3.1.2 (88 of 88), and a
-  rebuild of Ubuntu's MrBayes 3.2.7a with these flags gives the same output as the
-  packaged binary (checked on one alignment), so the reference is built the way the
-  distribution builds it.
+**Two-thread results were mixed.** Some cases used more CPU or took longer;
+these measurements do not establish a consistent two-thread latency gain.
+The original and latest builds also adapt between concurrent and sequential
+chain evaluation according to measured performance, which adds scheduling
+variability under contention. See the [summary](alan/reports/codex-max-20261027/benchmark.json)
+and [individual measurements](alan/reports/codex-max-20261027/benchmark-raw.json).
 
-Note that 3.2.9 itself gives different results from 3.2.7a at the same seed: 3.2.9
-fixes the Nodeslider proposal ratio for non-clock trees.
+### What the previous optimization had already achieved
+
+The earlier Dikarya report recorded these quiet-host wall times against stock
+3.2.9, before the newest Codex pass:
+
+| Input | Generations | Stock 3.2.9 | Previous dikarya2, 1 thread | Previous dikarya2, 2 threads |
+|---|---:|---:|---:|---:|
+| yb4s | 100,000 | 85.3 s | 45.5 s | 28.8 s |
+| 27d6 | 100,000 | 65.8 s | 37.7 s | 23.5 s |
+| tr9b | 30,000 | 59.7 s | 33.5 s | 21.0 s |
+| 1nek | 30,000 | 64.2 s | 37.1 s | 24.3 s |
+| s33 | 6,000 | 47.3 s | 27.3 s | 19.3 s |
+| cad46114 | 3,000 | 36.0 s | 21.3 s | 15.1 s |
+
+That previous build was already about **1.7–1.9× faster at one thread and
+2.4–3.0× faster at two threads** than stock 3.2.9 in those tests. These historical
+wall times come from `/var/www/dikarya/ops/mrbayes/README.md`; they are not new
+measurements of the latest build. They must not be multiplied by the newest
+CPU-time ratios to manufacture a total wall-clock speedup.
+
+Ubuntu's older `/usr/bin/mb` is a separate 3.2.7a reference. Upstream's later
+NodeSlider proposal-ratio fix changes MCMC results, so output identity with
+3.2.7a is not the target. Exactness is checked against the same 3.2.9 inference
+algorithm.
+
+## What changed in the Codex max pass
+
+### 1. Exact SIMD transition matrices
+
+The four-state eigen-decomposition coefficients are transposed and cached when
+the eigen decomposition changes. AVX2 then evaluates 16 independent transition
+matrix entries in parallel. Each entry retains the original four float products,
+the initial zero and the same addition order. The exponential's argument still
+uses the original casts and double arithmetic; `exp(0)` is exactly one. The
+original positivity/NaN clamp and matrix padding are preserved.
+
+Code: patch 7 in [the BEAGLE patch series](alan/beagle-4.0.1-dikarya2.patch),
+covering `DikaryaAVX.h`, `EigenDecompositionCube.h` and
+`EigenDecompositionCube.hpp` in `libhmsbeagle/CPU/`.
+
+### 2. Reuse the 25 possible tip-state products
+
+Four nucleotide states plus the missing-state code give only 25 possible pairs
+of tip states. For pattern ranges of at least 128 sites, the code validates and
+calculates each site's `5*state1+state2` index once and reuses it across rate
+categories. Each category calculates the 25 four-state products once; each site
+copies its product and applies its own fixed scale factor when required.
+
+Short ranges and unusual state values retain the original calculation. Existing
+exact underflow recovery remains active. Index scratch is private to each thread,
+and its TLS accessor stays outside the hot loops. The API microbenchmark measured
+approximately **2× faster two-tip kernels at 209 and 394 patterns**; that is a
+kernel result, not a 2× whole-program improvement.
+
+Code: patch 7, `DikaryaAVX.h`, in [the BEAGLE patch series](alan/beagle-4.0.1-dikarya2.patch).
+
+### 3. Skip zero-weight log-length sums in the default prior
+
+For the default gamma-Dirichlet branch prior, `a=c=1`, so both log-length-sum
+coefficients are zero. When every branch length is finite and positive, those
+sums are finite and contribute zero. The new path skips their calculation while
+summing tree length in precisely the original order and retaining the remaining
+prior expression. Other parameters, zero, negative or nonfinite lengths use the
+original path; `0*log(0)`, for example, must retain its original NaN behavior.
+
+Code: [LogDirPrior in mcmc.c](src/mcmc.c).
+
+### 4. Reproducible build and library loading
+
+The retained build uses **O2**, disables floating-point contraction, retains
+runtime AVX2 dispatch, and keeps MrBayes's debug/numerical failure checks enabled.
+BEAGLE embeds `$ORIGIN` in its library path so the packaged executable finds its
+own CPU plugin. Standalone runs without `LD_LIBRARY_PATH` were checked against
+the reference and the loader trace confirms the intended library is loaded.
+
+The previous optimizations remain: exact AVX2 likelihood and parsimony kernels,
+guarded handling of subnormal arithmetic, cached branch-length logarithms,
+concurrent chain likelihoods with proposals/random draws on the main thread, and
+pattern threading that preserves the likelihood reduction order.
+
+### 5. Preserve the original kernel for aliased partial updates
+
+An extra integration check found an existing edge case in the previous optimized
+library: if the destination is also a partials input, a speculative underflow
+pass can overwrite that input before retrying. All 840 matrix/non-aliased harness
+records matched stock, while 131 aliased records differed. Patch 8 sends aliased
+tip/partials and partials/partials updates, including fixed scaling, through the
+original kernel. Ordinary updates with separate input and output buffers retain
+the optimized path.
+
+## Byte-identical results and the scope of validation
+
+The previous-build comparison passed **131 canonical run comparisons**: 53 saved
+production inputs at one and two threads, eight model/prior variants, a large
+single-chain pattern-threading case, scalar fallbacks, the actual website default
+invocation, and the standalone package. Two comparisons intentionally preserve
+an existing malformed-input failure.
+
+The new direct-stock benchmark adds **six latest-versus-stock comparisons**, all
+identical after the same metadata normalization, plus three matching stock reruns.
+These are recorded separately from the 131 canonical comparisons.
+
+The independent public-BEAGLE-API harness returned **227,404,800 byte-identical
+bytes** against the frozen library. It covers transition matrices, normal and
+subnormal values, missing states, short/odd pattern counts, scale factors,
+buffer reuse and aliased updates.
+
+The comparator checks every output file and stdout. Its established timing,
+clock/run-ID and version/resource-banner fields are normalized; scientific
+output, checkpoints, seeds, diagnostics and exit status must match without a
+numeric tolerance. Most canonical validation runs use 1,000–2,000 generations;
+the longer benchmark cases use 10,000–25,000. These are not million-generation
+validation claims.
+
+Evidence: [validation summary](alan/reports/codex-max-20261027/validation-summary.json),
+[API fingerprints](alan/reports/codex-max-20261027/kernel-hashes.json),
+[build manifest](alan/reports/codex-max-20261027/build-manifest.json), and the
+[evidence and reproduction notes](alan/reports/codex-max-20261027/README.md).
+
+The integrated repository build is checked separately, including the alias
+fallback: 11 synthetic model/chain/thread comparisons and staged/native install
+checks, six real-input comparisons against stock at one and two threads, and
+227,404,800 raw API bytes matching stock with AVX2 enabled and disabled. These
+checks and the integrated artifact hashes are in the
+[integration validation](alan/reports/codex-max-20261027/integration-validation.json).
+
+## Experiments that were rejected
+
+- **Subtree site grouping:** output matched, but group construction and
+  gathering/scattering partials cost more than the arithmetic saved. Cached
+  maps and sparse evaluation still did not win on the tested alignments.
+- **O3, native scheduling and profile-guided optimization:** no reliable overall
+  win on this host. O2 is the retained configuration.
+- **0- and 50-microsecond spin waits:** different cases benefited differently.
+  The original 300-microsecond default remains unchanged.
+
+The rejected experiment artifacts remain in the development workspace's
+`optimization/experiments/` and `optimization/reports/` directories. They are
+excluded from this repository's default build.
+
+## Future optimizations worth investigating
+
+These are proposals, not implemented features or measured speedup promises.
+Each needs an exactness argument, a measured benefit on Dikarya workloads, and
+the same output comparisons before adoption.
+
+1. **Cache projected child partials.** A node repeatedly evaluates a transition
+   matrix times each child's partials, even when only the other child changed.
+   Instrument the hit rate for a cache keyed by physical child buffer, its content
+   version, matrix index and matrix version. Reuse an already rounded projection
+   only while all dependencies are unchanged. Invalidate on every relevant buffer,
+   matrix, rate and eigen update, and account for scaling. Bound memory and measure
+   cache traffic; an extra full partials buffer per edge could erase the gain.
+2. **Keep site repeats compressed through multiple operations.** Revisit the
+   rejected grouping experiment only with an approach that avoids repeatedly
+   expanding and gathering full arrays. Reuse maps across unchanged topology,
+   choose the path from measured repeat density, and include fixed-scale-factor
+   bits in equivalence checks. Preserve each site's original result and the final
+   site summation order.
+3. **Recover underflows in smaller tiles.** Measure where subnormals occur within
+   a category. A guarded tile path might redo only the affected pattern blocks
+   instead of a whole category. Batch MXCSR changes carefully: extra flag checks
+   can cost more than they save on small or mostly normal inputs. Gradual
+   underflow and every original rounding step must remain exact.
+4. **Reduce waiting under real worker contention.** Profile proposal preparation,
+   chain queueing, useful likelihood work and idle waits separately on both idle
+   and busy hosts. An adaptive spin/sleep policy could outperform a fixed timeout,
+   but the 0/50-microsecond experiments do not establish a universal setting.
+   Keep the worker's thread budget and the main-thread RNG/acceptance order.
+5. **Optimize remaining work only after profiling it.** Candidates include
+   `CopyTrees`, parsimony weight-validation scans that can be cached with explicit
+   invalidation, and byte-preserving output buffering. Future ISA-specific kernels
+   should use runtime dispatch and retain each lane's arithmetic order. Revisit
+   compiler tuning only with fresh representative data and a demonstrated win.
+6. **Extend the long-run evidence.** Before a broader release, add isolated-host
+   benchmarks, more seeds, million-generation runs, both worker budgets, numerical
+   failure/fallback cases and race checks. Measure CPU cost, wall latency and peak
+   memory separately; do not infer latency improvements from CPU reductions alone.
+
+Reducing generations, changing proposals, approximating exponentials/logarithms,
+using fast-math/FMA reassociation, or changing the likelihood reduction order
+would change the requested analysis or its bits and is outside this optimization
+goal.
 
 ## Building it
 
