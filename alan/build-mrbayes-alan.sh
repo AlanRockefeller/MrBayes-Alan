@@ -45,7 +45,7 @@ BG_PATCH=$HERE/beagle-4.0.1-$VER.patch
 MARK=.mrbayes-alan-build
 
 # Debian/Ubuntu 24.04 package build flags (dpkg-buildflags with hardening=+all)
-DEB_CFLAGS="-g -O2 -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -flto=auto -ffat-lto-objects -fstack-protector-strong -fstack-clash-protection -Wformat -Werror=format-security -fcf-protection"
+DEB_CFLAGS="-g -O2 -ffp-contract=off -fno-omit-frame-pointer -mno-omit-leaf-frame-pointer -flto=auto -ffat-lto-objects -fstack-protector-strong -fstack-clash-protection -Wformat -Werror=format-security -fcf-protection"
 DEB_CPPFLAGS="-Wdate-time -D_FORTIFY_SOURCE=3"
 DEB_LDFLAGS="-Wl,-Bsymbolic-functions -flto=auto -ffat-lto-objects -Wl,-z,relro -Wl,-z,now"
 
@@ -100,6 +100,8 @@ build_beagle() {   # <name>
     (cd "$SRC/build-bg-$1" &&
      cmake "$SRC/bg-$1" -DBUILD_OPENCL=OFF -DBUILD_CUDA=OFF -DBUILD_JNI=OFF -DBUILD_SSE=OFF \
          -DCMAKE_INSTALL_PREFIX="$SRC/bg-$1-inst" -DCMAKE_INSTALL_RPATH='$ORIGIN' \
+         -DCMAKE_BUILD_WITH_INSTALL_RPATH=ON \
+         -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O2 -g -DNDEBUG -ffp-contract=off" \
          >"$SRC/cmake-bg-$1.log" 2>&1 || { tail -30 "$SRC/cmake-bg-$1.log"; exit 1; }
      nice -n 10 make -j"$(nproc)" hmsbeagle hmsbeagle-cpu >"$SRC/build-bg-$1.log" 2>&1 \
          || { grep -m20 "error" "$SRC/build-bg-$1.log"; exit 1; }

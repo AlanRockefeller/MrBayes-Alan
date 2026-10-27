@@ -1,7 +1,7 @@
 From fab7bd92c13ee2ce0599b5ceece009c7264cb56c Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Fri, 9 Oct 2026 11:16:42 +0000
-Subject: [PATCH 1/6] Build without -march=native
+Subject: [PATCH 1/8] Build without -march=native
 
 With -march=native gcc may fuse a*b+c into an FMA in the scalar kernels
 (g++ contracts even in -std=c++11), which changes single-precision
@@ -32,7 +32,7 @@ index b8e37830..92c1bf2e 100644
 From 3e75f0727e1ab8bb077cdf2704f1e7291ed61329 Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Fri, 9 Oct 2026 11:16:42 +0000
-Subject: [PATCH 2/6] CPU 4-state single precision: exact AVX2 kernels
+Subject: [PATCH 2/8] CPU 4-state single precision: exact AVX2 kernels
 
 AVX2 versions of the kernels MrBayes spends its time in when it runs
 BEAGLE's CPU-4State-Single implementation: calcStatesStates,
@@ -658,7 +658,7 @@ index 00000000..8a611a73
 From ce198194e49e511edf9d6e837d4ed5dc0fc2642c Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Fri, 9 Oct 2026 21:29:26 +0000
-Subject: [PATCH 3/6] CPU 4-state single precision: no subnormal assists; exact
+Subject: [PATCH 3/8] CPU 4-state single precision: no subnormal assists; exact
  threading
 
 Two changes to the same code paths.
@@ -2267,7 +2267,7 @@ index 00000000..1417689a
 From d4593a30136928882f57e343b8737f602a81888b Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Fri, 9 Oct 2026 22:01:22 +0000
-Subject: [PATCH 4/6] CPU 4-state single precision: calls for different buffers
+Subject: [PATCH 4/8] CPU 4-state single precision: calls for different buffers
  may run concurrently
 
 MrBayes (3.2.9-dikarya2) can compute the likelihoods of different MCMC chains
@@ -2525,7 +2525,7 @@ index 50819503..b2720b03 100644
 From 6a02b1dfdf9cc2c249321abc0c35662b38a1c1ce Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Mon, 12 Oct 2026 07:13:53 +0000
-Subject: [PATCH 5/6] Concurrent calls without AVX2: the original edge path
+Subject: [PATCH 5/8] Concurrent calls without AVX2: the original edge path
  uses per-thread buffers too
 
 Without AVX2, or with BEAGLE_DIKARYA_SCALAR set, the 4-state edge likelihood
@@ -2648,7 +2648,7 @@ index dfef629a..73d88fa9 100644
 From af52ffc4b428629236999db17441126fefabc70d Mon Sep 17 00:00:00 2001
 From: Alan Rockefeller <alanrockefeller@gmail.com>
 Date: Sat, 10 Oct 2026 03:06:13 +0000
-Subject: [PATCH 6/6] Version 4.0.1-dikarya2
+Subject: [PATCH 6/8] Version 4.0.1-dikarya2
 
 The release tag still printed 4.0.1 (PRE-RELEASE); name the patched build so
 that a MrBayes log shows which library ran. MrBayes 3.2.9-dikarya2 computes
@@ -2674,3 +2674,288 @@ index 4e91d709..fc1e19a3 100644
 -- 
 2.43.0
 
+From 554613856b2afb5f873e60a0c33d8968bb452bde Mon Sep 17 00:00:00 2001
+From: Alan Rockefeller <alanrockefeller@gmail.com>
+Date: Tue, 27 Oct 2026 21:23:46 +0000
+Subject: [PATCH 7/8] Cache exact four-state transitions and tip-pair products
+
+Transpose each eigen coefficient cube when it changes and evaluate independent
+matrix entries with AVX2 while retaining the original rounding and sum order.
+Reuse validated tip-pair indices and the 25 possible products across categories
+for ranges of at least 128 patterns. Keep unusual-state and underflow fallbacks,
+per-site fixed scaling, and thread-private scratch.
+---
+ libhmsbeagle/CPU/DikaryaAVX.h               | 100 +++++++++++++++++++-
+ libhmsbeagle/CPU/EigenDecompositionCube.h   |   2 +
+ libhmsbeagle/CPU/EigenDecompositionCube.hpp |  16 ++++
+ 3 files changed, 116 insertions(+), 2 deletions(-)
+
+diff --git a/libhmsbeagle/CPU/DikaryaAVX.h b/libhmsbeagle/CPU/DikaryaAVX.h
+index b8ca1819..196ce4af 100644
+--- a/libhmsbeagle/CPU/DikaryaAVX.h
++++ b/libhmsbeagle/CPU/DikaryaAVX.h
+@@ -34,6 +34,7 @@
+ #include <immintrin.h>
+ #include <cmath>
+ #include <cstdlib>
++#include <vector>
+ 
+ #define DK_TARGET __attribute__((target("avx2")))
+ #define DK_INLINE inline __attribute__((always_inline))
+@@ -49,6 +50,40 @@ inline bool enabled() {
+     return on;
+ }
+ 
++/* The cube decomposition stores C[i,j,k]. Its cached transpose stores
++   C[k,i,j], so independent matrix entries can be evaluated in parallel
++   without changing the four-term sum for any one entry. */
++DK_TARGET inline void transitionMatrices4(float** matrices, const int* indices,
++        const double* lengths, const double* rates, int count, int categories,
++        const float* eigen, const float* coefficients) {
++    for (int u = 0; u < count; ++u) {
++        float* out = matrices[indices[u]];
++        for (int l = 0; l < categories; ++l) {
++            float e[4];
++            for (int k = 0; k < 4; ++k) {
++                // The cast and double arithmetic match updateTransitionMatrices.
++                const double x = eigen[k] * ((float) lengths[u] * rates[l]);
++                e[k] = x == 0.0 ? 1.0f : (float) std::exp(x);
++            }
++            __m256 lo = _mm256_setzero_ps(), hi = _mm256_setzero_ps();
++            for (int k = 0; k < 4; ++k) {
++                const __m256 x = _mm256_broadcast_ss(e + k);
++                lo = _mm256_add_ps(lo, _mm256_mul_ps(_mm256_loadu_ps(coefficients + 16 * k), x));
++                hi = _mm256_add_ps(hi, _mm256_mul_ps(_mm256_loadu_ps(coefficients + 16 * k + 8), x));
++            }
++            // Scalar code keeps sum only when sum > 0, including for NaNs.
++            lo = _mm256_max_ps(lo, _mm256_setzero_ps());
++            hi = _mm256_max_ps(hi, _mm256_setzero_ps());
++            _mm_storeu_ps(out, _mm256_castps256_ps128(lo));
++            _mm_storeu_ps(out + 5, _mm256_extractf128_ps(lo, 1));
++            _mm_storeu_ps(out + 10, _mm256_castps256_ps128(hi));
++            _mm_storeu_ps(out + 15, _mm256_extractf128_ps(hi, 1));
++            out[4] = out[9] = out[14] = out[19] = 1.0f;
++            out += 20;
++        }
++    }
++}
++
+ /* c[j] = column j of a 4x5 row-major matrix, duplicated into both halves:
+    (m0j, m1j, m2j, m3j, m0j, m1j, m2j, m3j). */
+ DK_TARGET DK_INLINE void loadColumns(const float* m, __m256 c[4]) {
+@@ -550,10 +585,63 @@ DK_TARGET unsigned statesPartials(float* destP,
+ }
+ 
+ /* destP[i] = matrices1[5i + state1] * matrices2[5i + state2]  (/ scale[k]) */
++__attribute__((noinline)) inline std::vector<int>& tipPairScratch() {
++    static thread_local std::vector<int> indices;
++    return indices;
++}
++
++DK_TARGET inline bool tipPairIndices(int* out, const int* a, const int* b, int n) {
++    const __m256i zero = _mm256_setzero_si256(), four = _mm256_set1_epi32(4);
++    __m256i bad = zero;
++    int k = 0;
++    for (; k + 8 <= n; k += 8) {
++        const __m256i x = _mm256_loadu_si256((const __m256i*) (a + k));
++        const __m256i y = _mm256_loadu_si256((const __m256i*) (b + k));
++        bad = _mm256_or_si256(bad, _mm256_or_si256(
++            _mm256_or_si256(_mm256_cmpgt_epi32(zero, x), _mm256_cmpgt_epi32(x, four)),
++            _mm256_or_si256(_mm256_cmpgt_epi32(zero, y), _mm256_cmpgt_epi32(y, four))));
++        const __m256i index = _mm256_add_epi32(_mm256_add_epi32(x, _mm256_slli_epi32(x, 2)), y);
++        _mm256_storeu_si256((__m256i*) (out + k), index);
++    }
++    if (!_mm256_testz_si256(bad, bad)) return false;
++    for (; k < n; ++k) {
++        if (!stateInTable(a[k]) || !stateInTable(b[k])) return false;
++        out[k] = 5 * a[k] + b[k];
++    }
++    return true;
++}
++
++template <bool FIXED_SCALING>
++DK_TARGET DK_INLINE void ssLookup(float* d, const int* indices,
++        const __m128 t1[5], const __m128 t2[5],
++        const float* scaleFactors, int start, int end) {
++    // A category has only 25 possible tip pairs, regardless of alignment size.
++    // Each table entry is precisely the original four float multiplies.
++    __m128 products[25];
++    for (int a = 0; a < 5; ++a)
++        for (int b = 0; b < 5; ++b)
++            products[5 * a + b] = _mm_mul_ps(t1[a], t2[b]);
++    int k = start;
++    for (; k + 1 < end; k += 2) {
++        __m256 r = pair128(products[indices[k-start]], products[indices[k+1-start]]);
++        if (FIXED_SCALING) r = _mm256_div_ps(r, broadcastPair(scaleFactors + k));
++        _mm256_storeu_ps(d + 4 * k, r);
++    }
++    if (k < end) {
++        __m128 r = products[indices[k-start]];
++        if (FIXED_SCALING) r = _mm_div_ps(r, _mm_broadcast_ss(scaleFactors + k));
++        _mm_storeu_ps(d + 4 * k, r);
++    }
++}
++
+ template <bool FIXED_SCALING, bool GUARDED>
+ DK_TARGET DK_INLINE bool ssPass(float* d, const int* states1, const float* m1, const __m128 t1[5],
+                       const int* states2, const float* m2, const __m128 t2[5], bool tameScale,
+-                      const float* scaleFactors, int start, int end) {
++                      const float* scaleFactors, int start, int end, const int* indices = NULL) {
++    if (!GUARDED && indices) {
++        ssLookup<FIXED_SCALING>(d, indices, t1, t2, scaleFactors, start, end);
++        return false;
++    }
+     const __m128i ls = _mm_set1_epi32((int) limitBits(kTwoM126));
+     bool sub = false;
+     for (int k = start; k < end; k++) {
+@@ -579,6 +667,14 @@ DK_TARGET unsigned statesStates(float* destP,
+                                 const float* scaleFactors,
+                                 int categoryCount, int paddedPatternCount,
+                                 int startPattern, int endPattern) {
++    const int* indices = NULL;
++    if (endPattern - startPattern >= 128) {
++        std::vector<int>& scratch = tipPairScratch();
++        scratch.resize(endPattern - startPattern);
++        int* pairs = scratch.data();
++        if (tipPairIndices(pairs, states1 + startPattern, states2 + startPattern, endPattern - startPattern))
++            indices = pairs;
++    }
+     const unsigned csr = _mm_getcsr();
+     const bool ftz = ftzUsable(csr);
+     const bool tame = !FIXED_SCALING || scaleFactorsTame(scaleFactors, startPattern, endPattern);
+@@ -594,7 +690,7 @@ DK_TARGET unsigned statesStates(float* destP,
+         if (ftz)
+             ftzBegin(csr);
+         ssPass<FIXED_SCALING, false>(destP + u0, states1, m1, t1, states2, m2, t2, tame,
+-                                     scaleFactors, startPattern, endPattern);
++                                     scaleFactors, startPattern, endPattern, indices);
+         if (!ftz)
+             continue;
+         const bool tiny = ftzUnderflowed();
+diff --git a/libhmsbeagle/CPU/EigenDecompositionCube.h b/libhmsbeagle/CPU/EigenDecompositionCube.h
+index 312342ab..867a4720 100644
+--- a/libhmsbeagle/CPU/EigenDecompositionCube.h
++++ b/libhmsbeagle/CPU/EigenDecompositionCube.h
+@@ -9,6 +9,7 @@
+ #define EIGENDECOMPOSITIONCUBE_H_
+ 
+ #include "libhmsbeagle/CPU/EigenDecomposition.h"
++#include <vector>
+ 
+ namespace beagle {
+ namespace cpu {
+@@ -27,6 +28,7 @@ class EigenDecompositionCube : public EigenDecomposition<BEAGLE_CPU_EIGEN_GENERI
+ 
+ protected:
+     REALTYPE** gCMatrices;
++    std::vector<float> dkCoefficients4;
+ 
+ public:
+ 	EigenDecompositionCube(int decompositionCount, 
+diff --git a/libhmsbeagle/CPU/EigenDecompositionCube.hpp b/libhmsbeagle/CPU/EigenDecompositionCube.hpp
+index b2720b03..c822fb03 100644
+--- a/libhmsbeagle/CPU/EigenDecompositionCube.hpp
++++ b/libhmsbeagle/CPU/EigenDecompositionCube.hpp
+@@ -9,6 +9,7 @@
+ 
+ #include "libhmsbeagle/CPU/EigenDecompositionCube.h"
+ #include <vector>
++#include "libhmsbeagle/CPU/DikaryaAVX.h"
+ 
+ 
+ namespace beagle {
+@@ -50,6 +51,8 @@ EigenDecompositionCube<BEAGLE_CPU_EIGEN_GENERIC>::EigenDecompositionCube(int dec
+     matrixTmp = (REALTYPE*) malloc(sizeof(REALTYPE) * kStateCount);
+     firstDerivTmp = (REALTYPE*) malloc(sizeof(REALTYPE) * kStateCount);
+     secondDerivTmp = (REALTYPE*) malloc(sizeof(REALTYPE) * kStateCount);
++    if (sizeof(REALTYPE) == sizeof(float) && T_PAD == 1 && kStateCount == 4)
++        dkCoefficients4.resize((size_t) kEigenDecompCount * 64);
+ }
+ 
+ BEAGLE_CPU_EIGEN_TEMPLATE
+@@ -98,6 +101,10 @@ void EigenDecompositionCube<BEAGLE_CPU_EIGEN_GENERIC>::setEigenDecomposition(int
+         }
+     }
+ 
++    if (!dkCoefficients4.empty())
++        for (int k = 0; k < 4; ++k)
++            for (int ij = 0; ij < 16; ++ij)
++                dkCoefficients4[(size_t) eigenIndex * 64 + k * 16 + ij] = gCMatrices[eigenIndex][ij * 4 + k];
+ }
+ 
+ #define UNROLL
+@@ -111,6 +118,15 @@ void EigenDecompositionCube<BEAGLE_CPU_EIGEN_GENERIC>::updateTransitionMatrices(
+                                                       const double* categoryRates,
+                                                       REALTYPE** transitionMatrices,
+                                                       int count) {
++#ifdef BEAGLE_DIKARYA_AVX
++    if (!dkCoefficients4.empty() && dk::enabled() &&
++        firstDerivativeIndices == NULL && secondDerivativeIndices == NULL && !DEBUGGING_OUTPUT) {
++        dk::transitionMatrices4((float**) transitionMatrices, probabilityIndices,
++            edgeLengths, categoryRates, count, kCategoryCount,
++            (const float*) gEigenValues[eigenIndex], dkCoefficients4.data() + (size_t) eigenIndex * 64);
++        return;
++    }
++#endif
+     /* Dikarya: a per-thread temporary, so concurrent calls for different
+        matrices do not share one */
+     static thread_local std::vector<REALTYPE> dkMatrixTmp;
+From f221e6877403c461d1e452f0384116884813a945 Mon Sep 17 00:00:00 2001
+From: Alan Rockefeller <alanrockefeller@gmail.com>
+Date: Tue, 27 Oct 2026 21:30:17 +0000
+Subject: [PATCH 8/8] Keep aliased partial updates on the original kernel
+
+The existing speculative FTZ pass can overwrite a child buffer before retrying
+an underflowing category. Preserve the original scalar calculation when the
+destination aliases either partials input, with or without fixed scaling.
+Non-aliased MrBayes tree updates retain the optimized path.
+
+The public API harness exposed 131 aliased records differing from stock while
+all 840 matrix/non-aliased records matched. This behavior also exists in the
+previous optimized library; the latest transition/tip-table changes preserve it.
+---
+ libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp | 10 ++++++----
+ 1 file changed, 6 insertions(+), 4 deletions(-)
+
+diff --git a/libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp b/libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp
+index fd51bf27..2e0dc0c1 100644
+--- a/libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp
++++ b/libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp
+@@ -291,7 +291,9 @@ void BeagleCPU4StateImpl<BEAGLE_CPU_GENERIC>::calcStatesPartials(REALTYPE* destP
+                                                                  int startPattern,
+                                                                  int endPattern) {
+ #ifdef BEAGLE_DIKARYA_AVX
+-    if (DK_FLOAT4) {
++    /* A speculative underflow pass may retry after writing destP. Keep the
++       original kernel when that would overwrite an input needed by the retry. */
++    if (DK_FLOAT4 && destP != partials2) {
+         dk::OpState& dkState = dk::opState();
+         dkState.outMaySub = dk::statesPartials<false>((float*) destP, states1, (const float*) matrices1,
+             (const float*) partials2, (const float*) matrices2, NULL, kCategoryCount,
+@@ -339,7 +341,7 @@ void BeagleCPU4StateImpl<BEAGLE_CPU_GENERIC>::calcStatesPartialsFixedScaling(REA
+                                                                              int startPattern,
+                                                                              int endPattern) {
+ #ifdef BEAGLE_DIKARYA_AVX
+-    if (DK_FLOAT4) {
++    if (DK_FLOAT4 && destP != partials2) {
+         dk::OpState& dkState = dk::opState();
+         dkState.outMaySub = dk::statesPartials<true>((float*) destP, states1, (const float*) matrices1,
+             (const float*) partials2, (const float*) matrices2, (const float*) scaleFactors,
+@@ -387,7 +389,7 @@ void BeagleCPU4StateImpl<BEAGLE_CPU_GENERIC>::calcPartialsPartials(REALTYPE* des
+                                                                    int startPattern,
+                                                                    int endPattern) {
+ #ifdef BEAGLE_DIKARYA_AVX
+-    if (DK_FLOAT4) {
++    if (DK_FLOAT4 && destP != partials1 && destP != partials2) {
+         dk::OpState& dkState = dk::opState();
+         dkState.outMaySub = dk::partialsPartials<false>((float*) destP, (const float*) partials1,
+             (const float*) matrices1, (const float*) partials2, (const float*) matrices2,
+@@ -575,7 +577,7 @@ void BeagleCPU4StateImpl<BEAGLE_CPU_GENERIC>::calcPartialsPartialsFixedScaling(R
+                                                                                int startPattern,
+                                                                                int endPattern) {
+ #ifdef BEAGLE_DIKARYA_AVX
+-    if (DK_FLOAT4) {
++    if (DK_FLOAT4 && destP != partials1 && destP != partials2) {
+         dk::OpState& dkState = dk::opState();
+         dkState.outMaySub = dk::partialsPartials<true>((float*) destP, (const float*) partials1,
+             (const float*) matrices1, (const float*) partials2, (const float*) matrices2,
