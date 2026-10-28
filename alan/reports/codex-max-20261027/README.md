@@ -37,6 +37,7 @@ leaves stock and patched BEAGLE under its `SRC` directory (by default
 from this repository's root:
 
 ```sh
+set -eu
 build_dir="$HOME/mrbayes-3.2.9-dikarya2-build"
 g++ -std=c++11 -O2 -ffp-contract=off -I"$build_dir/bg-dikarya2" \
   alan/check-kernels.cpp -L"$build_dir/bg-stock-inst/lib" -lhmsbeagle \

@@ -28,8 +28,10 @@ interchangeable with a percentage increase in throughput.
 ### Latest build versus stock MrBayes
 
 “Stock” here means **MrBayes 3.2.9, commit `4f741bc`, with BEAGLE 4.0.1's ordinary
-CPU kernels**. Its build disables `-march=native`, matching the distribution's
-floating-point configuration and preventing FMA contraction. The campaign reference was
+CPU kernels**. The campaign reference disables `-march=native`, matching the
+distribution's baseline x86-64 configuration. The repository build script also
+passes `-ffp-contract=off` explicitly to both MrBayes and BEAGLE to disable
+floating-point contraction independently of architecture tuning. The campaign reference was
 `build-mb-stock/src/mb` with `bg-stock-inst/lib` in the optimization workspace.
 It includes BEAGLE acceleration.
 
@@ -60,9 +62,10 @@ previous-build campaign below, so compare builds within each table.
 
 These are whole analyses at the listed generation counts, including setup and
 summaries. They are measurements of these workloads, not a claim that every
-alignment gets the same speedup. The direct stock comparison above is at one
-thread; the latest build has not been remeasured against stock at two threads
-in this documentation pass.
+alignment gets the same speedup. The direct stock timing campaign above is at
+one thread. Separate integration checks also compare the latest build with
+stock at two threads; those are correctness checks rather than a new timing
+campaign.
 
 ### Latest build versus the previous optimization
 
