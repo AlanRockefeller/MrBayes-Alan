@@ -8063,7 +8063,7 @@ MrBFlt LogDirPrior (Tree *t, ModelParams *mp, int PV)
     /* ln prior prob. under Dirichlet priors and twoExp prior
      //chi */
 
-    int    i, numBranches, nb[2] = {0,0};
+    int    i, numBranches, flatDir, nb[2] = {0,0};
     MrBFlt lnprior = 0.0, tb[2] = {0,0}, treeL = 0.0;
     MrBFlt aT, bT, a, c;
     TreeNode  *p;
@@ -8083,7 +8083,30 @@ MrBFlt LogDirPrior (Tree *t, ModelParams *mp, int PV)
         bT = mp->brlensDir[1];
         a  = mp->brlensDir[2];
         c  = mp->brlensDir[3];
-    
+
+        /* The default gamma-Dirichlet prior has a=c=1: both log-length
+           coefficients are zero. For finite positive lengths their sums
+           are finite, and adding those zero terms to lnprior=0 gives 0.
+           Keep the tree-length sum in its original order. Invalid lengths
+           must take the original path (0*log(0), for example, is NaN). */
+        flatDir = (DkEnabled() && a == 1.0 && c == 1.0);
+        if (flatDir)
+            {
+            for (i = 0; i < numBranches; i++)
+                {
+                p = t->allDownPass[i];
+                if (!(p->length > 0.0 && isfinite(p->length)))
+                    {
+                    flatDir = NO;
+                    nb[0] = nb[1] = 0;
+                    treeL = 0.0;
+                    break;
+                    }
+                treeL += p->length;
+                nb[IsTip(p)]++;
+                }
+            }
+        if (!flatDir)
         for (i = 0; i < numBranches; i++)
             {
             p = t->allDownPass[i];

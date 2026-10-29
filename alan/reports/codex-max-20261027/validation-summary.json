@@ -1,0 +1,83 @@
+{
+  "runs": [
+    {
+      "name": "final-suite-1",
+      "comparisons": 53,
+      "all_identical": true
+    },
+    {
+      "name": "final-suite-2",
+      "comparisons": 53,
+      "all_identical": true
+    },
+    {
+      "name": "final-hky-gamma",
+      "comparisons": 2,
+      "all_identical": true
+    },
+    {
+      "name": "final-gtr-invgamma",
+      "comparisons": 2,
+      "all_identical": true
+    },
+    {
+      "name": "final-jc-equal",
+      "comparisons": 2,
+      "all_identical": true
+    },
+    {
+      "name": "final-gtr-propinv",
+      "comparisons": 2,
+      "all_identical": true
+    },
+    {
+      "name": "final-sym-gamma",
+      "comparisons": 2,
+      "all_identical": true
+    },
+    {
+      "name": "final-prior-nonflat",
+      "comparisons": 2,
+      "all_identical": true
+    },
+    {
+      "name": "final-prior-inverse-valid",
+      "comparisons": 2,
+      "all_identical": true
+    },
+    {
+      "name": "final-prior-twoexp",
+      "comparisons": 2,
+      "all_identical": true
+    },
+    {
+      "name": "pattern-final",
+      "comparisons": 1,
+      "all_identical": true
+    },
+    {
+      "name": "scalar-final",
+      "comparisons": 2,
+      "all_identical": true
+    },
+    {
+      "name": "website-default-final",
+      "comparisons": 3,
+      "all_identical": true
+    },
+    {
+      "name": "native-final",
+      "comparisons": 3,
+      "all_identical": true
+    }
+  ],
+  "all_identical": true,
+  "run_comparisons": 131,
+  "expected_input_failures": 2,
+  "binary_api": {
+    "bytes": 227404800,
+    "sha256": "2feb3183fb9ba40b3d9feebfc8b7413e581cae34c40cb853499fbe600ea52ae5",
+    "identical": true
+  },
+  "loader_uses_adjacent_cpu_library": true
+}

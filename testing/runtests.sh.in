@@ -64,15 +64,15 @@ if	(cd "$tmpdir" && "$@" "$pathname") >"$tmpdir/$pathname.out"
 then ok; else error 'Could not create output...'; fi
 
 t=$(( t + 1 )); m='Analysis completed'
-# Analysis completed in N seconds
-# ... should occur once (N is integer).
+# RunChain reports subsecond, singular, seconds, minutes or hours durations.
+# Exactly one of its completion messages must occur, regardless of run speed.
 awk '
-/Analysis completed in [[:digit:]]+ seconds/ {
+/^[[:space:]]*Analysis completed in (less than 1 second|1 second|(([[:digit:]]+ hours )?[[:digit:]]+ mins )?[[:digit:]]+ seconds)[[:space:]]*$/ {
 	count++
 }
 END {
 	if (count != 1) {
-		printf "Did find expected text (count = %d != 1)\n", count
+		printf "Expected one analysis-completion message (count = %d != 1)\n", count
 		err = 1
 	}
 	exit err

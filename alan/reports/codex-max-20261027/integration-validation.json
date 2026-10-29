@@ -1,0 +1,251 @@
+{
+  "date": "2026-10-27",
+  "repository": "AlanRockefeller/MrBayes-Alan",
+  "base_branch": "main",
+  "base_commit": "e445cc05b287151f94caa787cfef35b426042b22",
+  "tested_code_commit": "aca71d114907bfeafe06823c2b6e18e7f787effd",
+  "build_method": "Full repository script build, followed by a rebuild of the CPU plugin after adding the alias fallback and a rerun of the unchanged self-test/staging/native-install section.",
+  "beagle_patch_series": {
+    "patches": 8,
+    "applies_cleanly": true,
+    "reproduces_compiled_sources": true
+  },
+  "synthetic_comparisons": 11,
+  "synthetic_all_identical": true,
+  "staged_install_check_passed": true,
+  "native_install_check_passed": true,
+  "public_api": [
+    {
+      "build": "stock",
+      "bytes": 227404800,
+      "sha256": "5ecfcbfa0a34623e774ec597423a43e2bce4ac1c829045a5d327bd387df9f677"
+    },
+    {
+      "build": "latest",
+      "bytes": 227404800,
+      "sha256": "5ecfcbfa0a34623e774ec597423a43e2bce4ac1c829045a5d327bd387df9f677",
+      "identical_to_stock": true
+    },
+    {
+      "build": "latest-scalar",
+      "bytes": 227404800,
+      "sha256": "5ecfcbfa0a34623e774ec597423a43e2bce4ac1c829045a5d327bd387df9f677",
+      "identical_to_stock": true
+    }
+  ],
+  "real_input_comparisons": 6,
+  "real_input_all_identical": true,
+  "real_input_runs": [
+    {
+      "case": "yb4s",
+      "wall_seconds": 1.0461010253056884,
+      "cpu_seconds": 0.710383,
+      "max_rss_kib": 17920,
+      "returncode": 0,
+      "model": "6:gamma",
+      "threads": 1,
+      "generations": 1000,
+      "chains": "2:4",
+      "other_busy_cpu_seconds": 0.9896169999534339,
+      "differences": [],
+      "identical": true,
+      "output_hashes": {
+        "input.nex": "32119a4bb438debd12a03b9e817e1642e685b10f4cd9ecf1eed5df9c2edaee41",
+        "input.nex.ckp": "a7ce7a63a702fc6c1a8a2893ac14f5645ddb059263c3497533c7d904ee23c68f",
+        "input.nex.con.tre": "699826235cba851cc66ec5d5b7a906f878a65233cba5e8dfbe0e8daa5604d1c6",
+        "input.nex.lstat": "241334e6906204d41e55384768c6ad68db581d2aeef9e93f5b09d3c38e2c88e1",
+        "input.nex.mcmc": "3a48f39c1e1ddc61f3ac1a73c143f2334e03386fc7f6800635c82e67818363ed",
+        "input.nex.parts": "55d20e3a60396c011f07687660b3753d672573f70a9f3ac4eca0f946e9595a8c",
+        "input.nex.pstat": "904791a546cd7822e0649a16888ec0790b13da4f8395d6b53cfa41d96ea42bbc",
+        "input.nex.run1.p": "069caf88211295cb795cf51c9b348374dd68bff661b04ed994a1377984f42893",
+        "input.nex.run1.t": "398943f743c5819a18c7665d87badce6323e1ce2d3926ecb9dbcb6eb881074e4",
+        "input.nex.run2.p": "42e1b83784b0df8e17712448566dcfdb14889aed0d48264042367ae4a4412a62",
+        "input.nex.run2.t": "505e34078358ffaf86fc00b7587bf0407d892d7a462518130f31f0c66fec0ea1",
+        "input.nex.trprobs": "e6de66a007d237d5bce7583c2a3de916c544ed59d175436a4f1052f4725a8e64",
+        "input.nex.tstat": "ff1c89c29e86d5545362ab9f978d7acda63659bbebe8e76bf2d70c04a7d08515",
+        "input.nex.vstat": "945e7e0a2d8662709d71546ce278eb9a5b87eaa312523b767b513edeed7a5e52",
+        "stdout.txt": "a62323195b851b0d0a72c2264042ec117d14ba4406ac6c7dcbfb58d66b3bce43"
+      }
+    },
+    {
+      "case": "tr9b",
+      "wall_seconds": 2.024018984287977,
+      "cpu_seconds": 1.580331,
+      "max_rss_kib": 29836,
+      "returncode": 0,
+      "model": "6:gamma",
+      "threads": 1,
+      "generations": 1000,
+      "chains": "2:4",
+      "other_busy_cpu_seconds": 1.769668999976717,
+      "differences": [],
+      "identical": true,
+      "output_hashes": {
+        "input.nex": "7d6977d9a371833feef054e4d648be6423d7d4b361f64ebcd8b62e75290d115b",
+        "input.nex.ckp": "a44b2028f695f4b46a14cba779eb5c8abbbaf445e82c497ecdd0c1fc52e3f5f1",
+        "input.nex.con.tre": "903e7e400bb9f8ed8b36ddd5438ff07fb5c1f69abf7d2d6944e672fc3a95edb1",
+        "input.nex.lstat": "c4637cc12a0220df0f4dd595ef50c471a8221ec8c7b1f8e35cde05b686a9ec0a",
+        "input.nex.mcmc": "5251c5f0372373639f10dfac88cecef1749f61d88cb95a79678f850e8e6c7527",
+        "input.nex.parts": "de97ab74e26d500f1a7f4b8adf17aa16e55f74ac8f5e842b8949881714247c2b",
+        "input.nex.pstat": "51ddbdcb62c3727ba3dd6dccd1f298447b8dba985e55215e79cd4d5d5b4db4d1",
+        "input.nex.run1.p": "367594a95ac85b4bf5614e37f7a13f63f111db203d3d2218c88441b5b4c8da33",
+        "input.nex.run1.t": "8ddae4f77b5ca62e897ebba6a424d61487b79407a237cc1b9c337b31ab0be0d3",
+        "input.nex.run2.p": "1857376b6bbc603b7903299b737c6e133265df5145372d9d3a2dad464c1ab94d",
+        "input.nex.run2.t": "44f55ecc2eabf4f51a8764b58dc465dd95298f8a43d5274b0416cdd8bfe19b80",
+        "input.nex.trprobs": "e8984bda360a7d814db93a50dff36311e515d1d6f6b3089fe75fd88481fe8cab",
+        "input.nex.tstat": "f52aa947e550d6c0aed0ddb9023a2915c7f5d1d073460c6498d999226cf579f6",
+        "input.nex.vstat": "0efdf1d633d700fb5f906d9b095cf927aae8c54e2281aa0be78e339b023a8e4a",
+        "stdout.txt": "9d74de97349d6fcd4cf1d7e18f1b2e85b832adc7ade440b4fe27feb707b84b2d"
+      }
+    },
+    {
+      "case": "job-cad46114-88c0-448c-9633-20ab41ab1f4b",
+      "wall_seconds": 11.705386275891215,
+      "cpu_seconds": 9.637799999999999,
+      "max_rss_kib": 171556,
+      "returncode": 0,
+      "model": "6:gamma",
+      "threads": 1,
+      "generations": 1000,
+      "chains": "2:4",
+      "other_busy_cpu_seconds": 9.702199999967405,
+      "differences": [],
+      "identical": true,
+      "output_hashes": {
+        "input.nex": "93379053aa09364f372adc152e6339a3d77882ed961076551b7f1a23be9865c1",
+        "input.nex.ckp": "2bcf37fb15cb46e647c8c81280a1a43018073abbe158a8bcfe38ad843ce16a77",
+        "input.nex.con.tre": "38bc5b58e776309fe0cde758be1afa293850a7d0005a7e276a98bd8093b184ba",
+        "input.nex.lstat": "9f3a07d974e80e74b5c9ab533f6171f0963d3757e0f7f613bb8ada9f00a0bd34",
+        "input.nex.mcmc": "264f91e3f3f50a44dfc993b4922c928fb875eb7eb3caa0e25d9bff586641ac54",
+        "input.nex.parts": "fc877c580f3f37e5ab627ebca9e8a2976607e8f59df80ac1da5346e85e0b8544",
+        "input.nex.pstat": "d8f4daff8509adf1596bc724d1894c1bad01dc73d8144a6bfd5ac07304239d98",
+        "input.nex.run1.p": "ff0d47ca3e8d22fb01af769957bc0ad7f0c967783937d9845ab2f5a00fa86fe4",
+        "input.nex.run1.t": "7b1db15dd79dba2f9c691f1bafe395ac3acf9d27febd15eb71f4f575618bbbb8",
+        "input.nex.run2.p": "93c7394a3554133f0d39ef6fe5fb81b69d68b86000a132e8239fb17ac0f22287",
+        "input.nex.run2.t": "eba37964e42d93772165b6fe259d4329c48b9fae5a97c162d15a409843b3318d",
+        "input.nex.trprobs": "3f373dc1d2e0de4211b24b05d263e5868c44ac3baae2c9b126be22c85a97a3f9",
+        "input.nex.tstat": "0c1b5b3c36f9ce8101a3dc7eabc1d9c54616bf798e439a113f0a8795df0a8538",
+        "input.nex.vstat": "492df3d06764b08619ae093b0cfc9a16081477613c1f3ad81edac973f46f0c56",
+        "stdout.txt": "4e5a667731fd8934c94efb293033ac8174c4db7421eb3fc436a93f6f9ef58ffe"
+      }
+    },
+    {
+      "case": "yb4s",
+      "wall_seconds": 0.8339004730805755,
+      "cpu_seconds": 0.771129,
+      "max_rss_kib": 24576,
+      "returncode": 0,
+      "model": "6:gamma",
+      "threads": 2,
+      "generations": 1000,
+      "chains": "2:4",
+      "other_busy_cpu_seconds": 0.668871000060536,
+      "differences": [],
+      "identical": true,
+      "output_hashes": {
+        "input.nex": "93b15fb8a028c8d249572d4fbea575e4b6c16a05b0a4a96b80bd7ce26a6f1dd6",
+        "input.nex.ckp": "a7ce7a63a702fc6c1a8a2893ac14f5645ddb059263c3497533c7d904ee23c68f",
+        "input.nex.con.tre": "699826235cba851cc66ec5d5b7a906f878a65233cba5e8dfbe0e8daa5604d1c6",
+        "input.nex.lstat": "241334e6906204d41e55384768c6ad68db581d2aeef9e93f5b09d3c38e2c88e1",
+        "input.nex.mcmc": "3a48f39c1e1ddc61f3ac1a73c143f2334e03386fc7f6800635c82e67818363ed",
+        "input.nex.parts": "55d20e3a60396c011f07687660b3753d672573f70a9f3ac4eca0f946e9595a8c",
+        "input.nex.pstat": "904791a546cd7822e0649a16888ec0790b13da4f8395d6b53cfa41d96ea42bbc",
+        "input.nex.run1.p": "069caf88211295cb795cf51c9b348374dd68bff661b04ed994a1377984f42893",
+        "input.nex.run1.t": "398943f743c5819a18c7665d87badce6323e1ce2d3926ecb9dbcb6eb881074e4",
+        "input.nex.run2.p": "42e1b83784b0df8e17712448566dcfdb14889aed0d48264042367ae4a4412a62",
+        "input.nex.run2.t": "505e34078358ffaf86fc00b7587bf0407d892d7a462518130f31f0c66fec0ea1",
+        "input.nex.trprobs": "e6de66a007d237d5bce7583c2a3de916c544ed59d175436a4f1052f4725a8e64",
+        "input.nex.tstat": "ff1c89c29e86d5545362ab9f978d7acda63659bbebe8e76bf2d70c04a7d08515",
+        "input.nex.vstat": "945e7e0a2d8662709d71546ce278eb9a5b87eaa312523b767b513edeed7a5e52",
+        "stdout.txt": "7c70ce1e532b5ebb64403bcde7b9788f47621b4feb48224fb029335271ae8f21"
+      }
+    },
+    {
+      "case": "tr9b",
+      "wall_seconds": 2.3102681152522564,
+      "cpu_seconds": 2.025026,
+      "max_rss_kib": 43532,
+      "returncode": 0,
+      "model": "6:gamma",
+      "threads": 2,
+      "generations": 1000,
+      "chains": "2:4",
+      "other_busy_cpu_seconds": 1.7449740000186265,
+      "differences": [],
+      "identical": true,
+      "output_hashes": {
+        "input.nex": "42db86735c5add5fefc120f39787ef9c62cdf9dfda8884f491667035a192c05f",
+        "input.nex.ckp": "a44b2028f695f4b46a14cba779eb5c8abbbaf445e82c497ecdd0c1fc52e3f5f1",
+        "input.nex.con.tre": "903e7e400bb9f8ed8b36ddd5438ff07fb5c1f69abf7d2d6944e672fc3a95edb1",
+        "input.nex.lstat": "c4637cc12a0220df0f4dd595ef50c471a8221ec8c7b1f8e35cde05b686a9ec0a",
+        "input.nex.mcmc": "5251c5f0372373639f10dfac88cecef1749f61d88cb95a79678f850e8e6c7527",
+        "input.nex.parts": "de97ab74e26d500f1a7f4b8adf17aa16e55f74ac8f5e842b8949881714247c2b",
+        "input.nex.pstat": "51ddbdcb62c3727ba3dd6dccd1f298447b8dba985e55215e79cd4d5d5b4db4d1",
+        "input.nex.run1.p": "367594a95ac85b4bf5614e37f7a13f63f111db203d3d2218c88441b5b4c8da33",
+        "input.nex.run1.t": "8ddae4f77b5ca62e897ebba6a424d61487b79407a237cc1b9c337b31ab0be0d3",
+        "input.nex.run2.p": "1857376b6bbc603b7903299b737c6e133265df5145372d9d3a2dad464c1ab94d",
+        "input.nex.run2.t": "44f55ecc2eabf4f51a8764b58dc465dd95298f8a43d5274b0416cdd8bfe19b80",
+        "input.nex.trprobs": "e8984bda360a7d814db93a50dff36311e515d1d6f6b3089fe75fd88481fe8cab",
+        "input.nex.tstat": "f52aa947e550d6c0aed0ddb9023a2915c7f5d1d073460c6498d999226cf579f6",
+        "input.nex.vstat": "0efdf1d633d700fb5f906d9b095cf927aae8c54e2281aa0be78e339b023a8e4a",
+        "stdout.txt": "244e70ea527b549d6760262edee3460035d58754e98f386998c95dc0d46061af"
+      }
+    },
+    {
+      "case": "job-cad46114-88c0-448c-9633-20ab41ab1f4b",
+      "wall_seconds": 10.712406476028264,
+      "cpu_seconds": 9.625912999999999,
+      "max_rss_kib": 276640,
+      "returncode": 0,
+      "model": "6:gamma",
+      "threads": 2,
+      "generations": 1000,
+      "chains": "2:4",
+      "other_busy_cpu_seconds": 8.894087000018628,
+      "differences": [],
+      "identical": true,
+      "output_hashes": {
+        "input.nex": "94a3f3e832ffec897af4bfed638697da7530442e3463783fc0c9a2d79721285f",
+        "input.nex.ckp": "2bcf37fb15cb46e647c8c81280a1a43018073abbe158a8bcfe38ad843ce16a77",
+        "input.nex.con.tre": "38bc5b58e776309fe0cde758be1afa293850a7d0005a7e276a98bd8093b184ba",
+        "input.nex.lstat": "9f3a07d974e80e74b5c9ab533f6171f0963d3757e0f7f613bb8ada9f00a0bd34",
+        "input.nex.mcmc": "264f91e3f3f50a44dfc993b4922c928fb875eb7eb3caa0e25d9bff586641ac54",
+        "input.nex.parts": "fc877c580f3f37e5ab627ebca9e8a2976607e8f59df80ac1da5346e85e0b8544",
+        "input.nex.pstat": "d8f4daff8509adf1596bc724d1894c1bad01dc73d8144a6bfd5ac07304239d98",
+        "input.nex.run1.p": "ff0d47ca3e8d22fb01af769957bc0ad7f0c967783937d9845ab2f5a00fa86fe4",
+        "input.nex.run1.t": "7b1db15dd79dba2f9c691f1bafe395ac3acf9d27febd15eb71f4f575618bbbb8",
+        "input.nex.run2.p": "93c7394a3554133f0d39ef6fe5fb81b69d68b86000a132e8239fb17ac0f22287",
+        "input.nex.run2.t": "eba37964e42d93772165b6fe259d4329c48b9fae5a97c162d15a409843b3318d",
+        "input.nex.trprobs": "3f373dc1d2e0de4211b24b05d263e5868c44ac3baae2c9b126be22c85a97a3f9",
+        "input.nex.tstat": "0c1b5b3c36f9ce8101a3dc7eabc1d9c54616bf798e439a113f0a8795df0a8538",
+        "input.nex.vstat": "492df3d06764b08619ae093b0cfc9a16081477613c1f3ad81edac973f46f0c56",
+        "stdout.txt": "31c5e2cb4952bd4b42e741b1777f38626e4b4ac0078bf4e2b23e31a9fd2b17cb"
+      }
+    }
+  ],
+  "native_loader": {
+    "scientific_outputs_identical_to_stock": true,
+    "without_LD_LIBRARY_PATH": true,
+    "cpu_plugin_paths": [
+      "/tmp/mrbayes-alan-pr.FUWsvE-install/lib/libhmsbeagle-cpu.so.40.0.0"
+    ]
+  },
+  "source_sha256": {
+    "src/mcmc.c": "fff1d5386a9deaef543f0667ea848e1c376591629fe1c79f2de0983c7ea64e29",
+    "alan/build-mrbayes-alan.sh": "71b5d26d808a258f67e427b964afbc240d4efa0c7c77a49c9f0fa95220650000",
+    "alan/beagle-4.0.1-dikarya2.patch": "8389f1cb24a4c6eb8c4f1e2c6d9a2a850b5829047172e51bcece39ec1a38e0c9",
+    "alan/check-kernels.cpp": "6659257df81d19f028d0de092bb1de83ab4b16cfa05c4f3e9f73b9beb321da26"
+  },
+  "applied_beagle_source_sha256": {
+    "libhmsbeagle/CPU/DikaryaAVX.h": "7c885623c65b5c69529b264318129958670ee1ac78b6c947eeded4870c31cc77",
+    "libhmsbeagle/CPU/EigenDecompositionCube.h": "4d767be692e88e105afa6f4a5f352c9a4d3c3f52b5afbd0fe3d76ab214af12b0",
+    "libhmsbeagle/CPU/EigenDecompositionCube.hpp": "5809d4c7c9bb7a971affe9aa1e70c3fd33f06ac22ac6fd6f57f367eab2978512",
+    "libhmsbeagle/CPU/BeagleCPU4StateImpl.hpp": "5409a8d64e2ee05c3ba15a2b84800b6a46ca741926bfbc28bb757dbc13d51b77"
+  },
+  "installed_artifact_sha256": {
+    "bin/mb": "2e5834cff7f809aec6319a511125846939a0a35a84fab762d9b58b7439822d76",
+    "lib/libhmsbeagle.so.1": "3891cf53b119214ce602910f458a43e2288746005dd735a00a3a9789ae142d31",
+    "lib/libhmsbeagle-cpu.so.40.0.0": "fcab465e93cc9f02f09afda593c8270c88f71d1777dcdeb457ec0a065565ade5"
+  },
+  "timing_scope": "The real-input integration runs are correctness checks, not interleaved performance benchmarks. Campaign speedup tables identify earlier measured builds."
+}

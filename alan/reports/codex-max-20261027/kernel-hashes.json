@@ -1,0 +1,32 @@
+[
+  {
+    "file": "kernels-final.bin",
+    "bytes": 227404800,
+    "sha256": "2feb3183fb9ba40b3d9feebfc8b7413e581cae34c40cb853499fbe600ea52ae5"
+  },
+  {
+    "file": "kernels-repeats.bin",
+    "bytes": 226437120,
+    "sha256": "cb18dd18bcaf3bbc7f531d77be4ad7c4afc26d277d85bdba6b8f142eac0edc5e"
+  },
+  {
+    "file": "kernels-baseline.bin",
+    "bytes": 226437120,
+    "sha256": "cb18dd18bcaf3bbc7f531d77be4ad7c4afc26d277d85bdba6b8f142eac0edc5e"
+  },
+  {
+    "file": "kernels-matrix-candidate.bin",
+    "bytes": 227404800,
+    "sha256": "2feb3183fb9ba40b3d9feebfc8b7413e581cae34c40cb853499fbe600ea52ae5"
+  },
+  {
+    "file": "kernels-matrix-baseline.bin",
+    "bytes": 227404800,
+    "sha256": "2feb3183fb9ba40b3d9feebfc8b7413e581cae34c40cb853499fbe600ea52ae5"
+  },
+  {
+    "file": "kernels-tip-table.bin",
+    "bytes": 227404800,
+    "sha256": "2feb3183fb9ba40b3d9feebfc8b7413e581cae34c40cb853499fbe600ea52ae5"
+  }
+]

@@ -1,0 +1,2 @@
+# Mail patches include whitespace in unchanged context, including blank lines.
+alan/*.patch -whitespace
